@@ -1,6 +1,9 @@
 [package]
-name = "bbc-em"
+name = "bbc_em"
 version = "0.1.0"
 authors = ["Greg Beard <greg.beard@vodafone.com>"]
 
-[dependencies]
+[lib]
+name = "bbc_em"
+path = "src/lib.rs"
+
