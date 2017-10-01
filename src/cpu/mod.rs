@@ -1,4 +1,5 @@
 use std::fmt;
+use std::error::Error;
 
 #[derive(Debug, PartialEq)]
 pub enum Addressing {
@@ -191,7 +192,7 @@ impl Registers {
     fn new() -> Registers {
         Registers {
             pc: 0,
-            sp: 0xfe,
+            sp: 0,
             acc: 0,
             x: 0,
             y: 0,
@@ -453,18 +454,105 @@ pub fn decode_instruction(mem: &[u8]) -> Result<(usize, Instruction), Instructio
 #[derive(Debug)]
 pub struct MemoryAccessError;
 
-const STACK_BOTTOM: u16 = 0x1000;
+#[derive(Debug)]
+pub enum StackError {
+    Overflow,
+    Underflow,
+    Unavailable,
+}
 
-fn push_stack(val: u8, mem: &mut [u8], reg: &mut Registers) -> Result<(), MemoryAccessError> {
-    *mem.get_mut((STACK_BOTTOM + reg.sp as u16) as usize).ok_or_else(|| MemoryAccessError)? = val;
-    reg.sp -= 1;
+#[derive(Debug)]
+pub enum CpuError {
+    Memory(MemoryAccessError),
+    Stack(StackError),
+    Paused,
+}
+
+impl Error for MemoryAccessError {
+    fn description(&self) -> &str {
+        "Attempted to access an invalid memory location"
+    }
+}
+
+impl Error for StackError {
+    fn description(&self) -> &str {
+        match *self {
+            StackError::Overflow => "Stack overflow",
+            StackError::Underflow => "Stack underflow",
+            StackError::Unavailable => "Stack not present",
+        }
+    }
+}
+
+impl Error for CpuError {
+    fn description(&self) -> &str {
+        match *self {
+            CpuError::Memory(ref e) => e.description(),
+            CpuError::Stack(ref e) => e.description(),
+            CpuError::Paused => "CPU paused",
+        }
+    }
+}
+
+impl fmt::Display for MemoryAccessError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", <Self as Error>::description(self))
+    }
+}
+
+impl fmt::Display for StackError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", <Self as Error>::description(self))
+    }
+}
+
+impl From<MemoryAccessError> for CpuError {
+    fn from(e: MemoryAccessError) -> CpuError {
+        CpuError::Memory(e)
+    }
+}
+
+impl From<StackError> for CpuError {
+    fn from(e: StackError) -> CpuError {
+        CpuError::Stack(e)
+    }
+}
+
+impl From<MemoryAccessError> for StackError {
+    fn from(_: MemoryAccessError) -> StackError {
+        StackError::Unavailable
+    }
+}
+
+impl fmt::Display for CpuError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", <Self as Error>::description(self))
+    }
+}
+
+const STACK_BOTTOM: u16 = 0x0100;
+
+fn push_stack(val: u8, mem: &mut [u8], reg: &mut Registers) -> Result<(), StackError> {
+    write_mem_raw(val, STACK_BOTTOM + reg.sp as u16, mem)?;
+    reg.sp.checked_sub(1)
+        .map(|r| reg.sp = r)
+        .ok_or_else(|| StackError::Overflow)?;
+
     Ok(())
 }
 
-fn pop_stack(mem: &[u8], reg: &mut Registers) -> Result<u8, MemoryAccessError> {
-    reg.sp += 1;
-    let val = *mem.get((STACK_BOTTOM + reg.sp as u16) as usize).ok_or_else(|| MemoryAccessError)?;
+fn pop_stack(mem: &[u8], reg: &mut Registers) -> Result<u8, StackError> {
+    reg.sp.checked_add(1)
+        .map(|r| reg.sp = r)
+        .ok_or_else(|| StackError::Underflow)?;
+
+    let val = read_mem_raw(STACK_BOTTOM + reg.sp as u16, mem)?;
     Ok(val)
+}
+
+fn write_mem_raw(val: u8, location: u16, mem: &mut [u8]) -> Result<(), MemoryAccessError> {
+    *mem.get_mut(location as usize).ok_or_else(|| MemoryAccessError)? = val;
+    Ok(())
 }
 
 fn write_mem(val: u8, addr: &Addressing, mem: &mut [u8], reg: &mut Registers) -> Result<(), MemoryAccessError> {
@@ -472,24 +560,32 @@ fn write_mem(val: u8, addr: &Addressing, mem: &mut [u8], reg: &mut Registers) ->
 
     match *addr {
         Accumulator => reg.acc = val,
-        Absolute(ref loc) => *mem.get_mut(*loc as usize).ok_or_else(|| MemoryAccessError)? = val,
-        AbsoluteX(ref loc) => *mem.get_mut((*loc + reg.x as u16) as usize).ok_or_else(|| MemoryAccessError)? = val,
-        AbsoluteY(ref loc) => *mem.get_mut((*loc + reg.y as u16) as usize).ok_or_else(|| MemoryAccessError)? = val,
-        ZeroPage(ref loc) => *mem.get_mut(*loc as usize).ok_or_else(|| MemoryAccessError)? = val,
-        ZeroPageX(ref loc) => *mem.get_mut(loc.wrapping_add(reg.x) as usize).ok_or_else(|| MemoryAccessError)? = val,
+        Absolute(ref loc) => write_mem_raw(val, *loc as _, mem)?,
+        AbsoluteX(ref loc) => write_mem_raw(val, *loc + reg.x as u16, mem)?,
+        AbsoluteY(ref loc) => write_mem_raw(val, *loc + reg.y as u16, mem)?,
+        ZeroPage(ref loc) => write_mem_raw(val, *loc as _, mem)?,
+        ZeroPageX(ref loc) => write_mem_raw(val, loc.wrapping_add(reg.x) as _, mem)?,
         IndirectX(ref loc) => {
-            let target = *mem.get(*loc as usize).ok_or_else(|| MemoryAccessError)? as u16;
-            *mem.get_mut(target.wrapping_add(reg.x as u16) as usize).ok_or_else(|| MemoryAccessError)? = val;
+            let target = read_mem_raw(*loc as _, mem)? as u16;
+            write_mem_raw(val, target.wrapping_add(reg.x as u16) as _, mem)?;
         },
         IndirectY(ref loc) => {
             let loc = *loc as u16 + reg.y as u16;
-            let target = *mem.get(loc as usize).ok_or_else(|| MemoryAccessError)? ;
-            *mem.get_mut(target as usize).ok_or_else(|| MemoryAccessError)? = val;
+            let target = read_mem_raw(loc as _, mem)?;
+            write_mem_raw(val, target as _, mem)?;
         },
         _ => unreachable!()
     }
 
     Ok(())
+}
+
+fn read_mem_raw(location: u16, mem: &[u8]) -> Result<u8, MemoryAccessError> {
+    Ok(*mem.get(location as usize).ok_or_else(|| MemoryAccessError)?)
+}
+
+fn page_crossed(from: u16, to: u16) -> bool {
+    (from & 0xff00) != (to & 0xff00)
 }
 
 fn read_mem(addr: &Addressing, mem: &[u8], reg: &Registers) -> Result<(u8, bool), MemoryAccessError> {
@@ -498,35 +594,35 @@ fn read_mem(addr: &Addressing, mem: &[u8], reg: &Registers) -> Result<(u8, bool)
     match *addr {
         Accumulator => Ok((reg.acc, false)),
         Immediate(ref v) => Ok((*v, false)),
-        Absolute(ref loc) => Ok((*mem.get(*loc as usize).ok_or_else(||MemoryAccessError)?, false)),
-        AbsoluteX(ref loc) => Ok((*mem.get((*loc + reg.x as u16) as usize).ok_or_else(|| MemoryAccessError)?, (reg.pc & 0xff00) != ((*loc + reg.x as u16) & 0xff00))),
-        AbsoluteY(ref loc) => Ok((*mem.get((*loc + reg.y as u16) as usize).ok_or_else(|| MemoryAccessError)?, (reg.pc & 0xff00) != ((*loc + reg.y as u16) & 0xff00))),
+        Absolute(ref loc) => Ok((read_mem_raw(*loc, mem)?, false)),
+        AbsoluteX(ref loc) => Ok((read_mem_raw(*loc + reg.x as u16, mem)?, page_crossed(reg.pc, *loc + reg.x as u16))),
+        AbsoluteY(ref loc) => Ok((read_mem_raw(*loc + reg.y as u16, mem)?, page_crossed(reg.pc, *loc + reg.y as u16))),
         Indirect(ref loc) => {
-            let target = (*mem.get(*loc as usize).ok_or_else(|| MemoryAccessError)? as u16) << 8 | *mem.get(*loc as usize + 1).ok_or_else(|| MemoryAccessError)? as u16;
-            Ok((*mem.get(target as usize).ok_or_else(|| MemoryAccessError)?, false))
+            let target = (read_mem_raw(*loc, mem)? as u16) << 8 | read_mem_raw(*loc + 1, mem)? as u16;
+            Ok((read_mem_raw(target, mem)?, false))
         },
         IndirectX(ref loc) => {
-            let target = *mem.get(*loc as usize).ok_or_else(|| MemoryAccessError)? as u16;
-            Ok((*mem.get(target.wrapping_add(reg.x as u16) as usize).ok_or_else(|| MemoryAccessError)?, false))
+            let target = read_mem_raw(*loc as _, mem)? as u16;
+            Ok((read_mem_raw(target.wrapping_add(reg.x as u16), mem)?, false))
         },
         IndirectY(ref loc) => {
             let loc = *loc as u16 + reg.y as u16;
-            let target = *mem.get(loc as usize).ok_or_else(|| MemoryAccessError)? ;
-            Ok((*mem.get(target as usize).ok_or_else(|| MemoryAccessError)?, (reg.pc & 0xff00) != (loc & 0xff00)))
+            let target = read_mem_raw(loc as _, mem)?;
+            Ok((read_mem_raw(target as _, mem)?, page_crossed(reg.pc, loc)))
         },
-        ZeroPage(ref loc) => Ok((*mem.get(*loc as usize).ok_or_else(|| MemoryAccessError)?, false)),
-        ZeroPageX(ref loc) => Ok((*mem.get(loc.wrapping_add(reg.x) as usize).ok_or_else(|| MemoryAccessError)?, false)),
-        ZeroPageY(ref loc) => Ok((*mem.get(loc.wrapping_add(reg.y) as usize).ok_or_else(|| MemoryAccessError)?, false)),
+        ZeroPage(ref loc) => Ok((read_mem_raw(*loc as _, mem)?, false)),
+        ZeroPageX(ref loc) => Ok((read_mem_raw(loc.wrapping_add(reg.x) as _, mem)?, false)),
+        ZeroPageY(ref loc) => Ok((read_mem_raw(loc.wrapping_add(reg.y) as _, mem)?, false)),
         Relative(_) | Implied => panic!(format!("Attempting to read mem for {:?}", addr))
     }
 }
 
-fn execute_instruction(ins: Instruction, mem: &mut [u8], reg: &mut Registers) -> Result<usize, MemoryAccessError> {
+fn execute_instruction(ins: Instruction, mem: &mut [u8], reg: &mut Registers) -> Result<usize, CpuError> {
     use self::OpCode::*;
-    use self::Addressing::*;
 
     match ins.0 {
         Adc => {
+            assert!(!reg.status.decimal);
 
             let orig = reg.acc;
             let (val, cross_page) = read_mem(&ins.1, mem, reg)?;
@@ -668,11 +764,12 @@ fn execute_instruction(ins: Instruction, mem: &mut [u8], reg: &mut Registers) ->
             }
         },
         Brk => {
-            push_stack( ((reg.pc & 0xff00) >> 8) as u8, mem, reg );
-            push_stack( (reg.pc & 0x00ff) as u8, mem, reg );
-            push_stack( u8::from(&reg.status), mem, reg );
-            let (lo, _) = read_mem(&Addressing::Absolute(0xfe), mem, reg)?;
-            let (hi, _) = read_mem(&Addressing::Absolute(0xff), mem, reg)?;
+            reg.status.brk = true;
+            push_stack( ((reg.pc & 0xff00) >> 8) as u8, mem, reg )?;
+            push_stack( (reg.pc & 0x00ff) as u8, mem, reg )?;
+            push_stack( u8::from(&reg.status), mem, reg )?;
+            let lo = read_mem_raw(0xfffe, mem)?;
+            let hi = read_mem_raw(0xffff, mem)?;
             reg.pc = (hi as u16) << 8 | lo as u16;
             reg.status.brk = true;
 
@@ -684,8 +781,7 @@ fn execute_instruction(ins: Instruction, mem: &mut [u8], reg: &mut Registers) ->
                     Addressing::Relative(ref offset) => {
                         let old_pos = reg.pc;
                         reg.pc = (reg.pc as i16 + *offset as i16) as u16;
-                        let cross_page = (old_pos & 0xff00) != (reg.pc & 0xff00);
-                        Ok(ins.2 + 1 + if cross_page { 1 } else { 0 })
+                        Ok(ins.2 + 1 + if page_crossed(old_pos, reg.pc) { 1 } else { 0 })
                     },
                     _ => unreachable!()
                 }
@@ -700,8 +796,7 @@ fn execute_instruction(ins: Instruction, mem: &mut [u8], reg: &mut Registers) ->
                     Addressing::Relative(ref offset) => {
                         let old_pos = reg.pc;
                         reg.pc = (reg.pc as i16 + *offset as i16) as u16;
-                        let cross_page = (old_pos & 0xff00) != (reg.pc & 0xff00);
-                        Ok(ins.2 + 1 + if cross_page { 1 } else { 0 })
+                        Ok(ins.2 + 1 + if page_crossed(old_pos, reg.pc) { 1 } else { 0 })
                     },
                     _ => unreachable!()
                 }
@@ -735,7 +830,7 @@ fn execute_instruction(ins: Instruction, mem: &mut [u8], reg: &mut Registers) ->
             Ok(ins.2 + if cross_page { 1 } else { 0 })
         },
         Cpx => {
-            let (val, cross_page) = read_mem(&ins.1, mem, reg)?;
+            let (val, _) = read_mem(&ins.1, mem, reg)?;
             reg.status.carry = reg.x >= val;
             reg.status.zero = reg.x == val;
             reg.status.negative = 0x80 == (reg.x & 0x80);
@@ -743,7 +838,7 @@ fn execute_instruction(ins: Instruction, mem: &mut [u8], reg: &mut Registers) ->
             Ok(ins.2)
         },
         Cpy => {
-            let (val, cross_page) = read_mem(&ins.1, mem, reg)?;
+            let (val, _) = read_mem(&ins.1, mem, reg)?;
             reg.status.carry = reg.y >= val;
             reg.status.zero = reg.y == val;
             reg.status.negative = 0x80 == (reg.y & 0x80);
@@ -803,13 +898,19 @@ fn execute_instruction(ins: Instruction, mem: &mut [u8], reg: &mut Registers) ->
         Jmp => {
             match ins.1 {
                 Addressing::Absolute(ref loc) => reg.pc = *loc,
-                Addressing::Indirect(ref offset) => reg.pc = (reg.pc as i16 + *offset as i16) as u16,
+                Addressing::Indirect(ref vec) => {
+                    let low = read_mem_raw(*vec, &mem)?;
+                    let hi = read_mem_raw(*vec + 1, &mem)?;
+
+                    reg.pc = (hi as u16) << 8 | (low as u16);
+                }
                 _ => unreachable!()
             }
 
             Ok(ins.2)
         },
         Jsr => {
+            reg.pc -= 1;
             push_stack(((reg.pc & 0xff00) >> 8) as u8, mem, reg)?;
             push_stack((reg.pc & 0x00ff) as u8, mem, reg)?;
             if let Addressing::Absolute(ref loc) = ins.1 {
@@ -865,21 +966,21 @@ fn execute_instruction(ins: Instruction, mem: &mut [u8], reg: &mut Registers) ->
         },
         Pha => {
             push_stack(reg.acc, mem, reg)?;
-            Ok(3)
+            Ok(ins.2)
         },
         Php => {
             push_stack(u8::from(&reg.status), mem, reg)?;
-            Ok(3)
+            Ok(ins.2)
         },
         Pla => {
             reg.acc = pop_stack(mem, reg)?;
             reg.status.zero = reg.acc == 0;
             reg.status.negative = 0x80 == (0x80 & reg.acc);
-            Ok(4)
+            Ok(ins.2)
         },
         Plp => {
             reg.status = StatusFlags::from(pop_stack(mem, reg)?);
-            Ok(4)
+            Ok(ins.2)
         },
         Rol => {
             let (mut val, _) = read_mem(&ins.1, mem, reg)?;
@@ -914,9 +1015,12 @@ fn execute_instruction(ins: Instruction, mem: &mut [u8], reg: &mut Registers) ->
         },
         Rts => {
             reg.pc = (pop_stack(mem, reg)? as u16) | ((pop_stack(mem, reg)? as u16) << 8);
+            reg.pc += 1;
             Ok(6)
         },
         Sbc => {
+            assert!(!reg.status.decimal);
+
             let orig = reg.acc;
             let (val, cross_page) = read_mem(&ins.1, mem, reg)?;
             let (v, o) = reg.acc.overflowing_sub(val);
@@ -995,18 +1099,35 @@ impl Cpu {
         }
     }
 
-    pub fn initialize(&mut self, mem: &[u8]) -> Result<(), MemoryAccessError> {
+    pub fn program_counter(&self) -> u16 {
+        self.registers.pc
+    }
+
+    pub fn initialize(&mut self, mem: &[u8]) -> Result<(), CpuError> {
         let (low, _) = read_mem(&Addressing::Absolute(0xfffc), mem, &self.registers)?;
         let (hi, _) = read_mem(&Addressing::Absolute(0xfffd), mem, &self.registers)?;
         self.registers.pc = ((hi as u16) << 8) | low as u16;
         Ok(())
     }
 
-    pub fn step(&mut self, mem: &mut [u8]) -> Result<usize, MemoryAccessError> {
+    pub fn step(&mut self, mem: &mut [u8]) -> Result<usize, CpuError> {
         let (bytes, ins) = decode_instruction(&mem[self.registers.pc as usize..]).unwrap();
         println!("{:04x} {}", self.registers.pc, ins);
         self.registers.pc += bytes as u16;
         execute_instruction(ins, mem, &mut self.registers)
+    }
+
+    pub fn interrupt_request(&mut self, mem: &mut [u8]) -> Result<bool, CpuError> {
+        if !self.registers.status.interrupt {
+            push_stack(((self.registers.pc & 0xff00) >> 8) as u8, mem, &mut self.registers)?;
+            push_stack((self.registers.pc & 0x00ff) as u8, mem, &mut self.registers)?;
+            push_stack(u8::from(&self.registers.status), mem, &mut self.registers)?;
+            let low = read_mem_raw(0xfffe, mem)?;
+            let hi = read_mem_raw(0xffff, mem)?;
+            self.registers.pc = ((hi as u16) << 8) | low as u16;
+        }
+
+        Ok(true)
     }
 }
 
