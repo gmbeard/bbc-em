@@ -1092,6 +1092,13 @@ pub struct Cpu {
     registers: Registers,
 }
 
+fn push_cpu_state(cpu: &mut Cpu, mem: &mut [u8]) -> Result<(), CpuError> {
+    push_stack(((cpu.registers.pc & 0xff00) >> 8) as u8, mem, &mut cpu.registers)?;
+    push_stack((cpu.registers.pc & 0x00ff) as u8, mem, &mut cpu.registers)?;
+    push_stack(u8::from(&cpu.registers.status), mem, &mut cpu.registers)?;
+    Ok(())
+}
+
 impl Cpu {
     pub fn new() -> Cpu {
         Cpu {
@@ -1117,17 +1124,30 @@ impl Cpu {
         execute_instruction(ins, mem, &mut self.registers)
     }
 
+    pub fn non_maskable_interrupt(&mut self, mem: &mut [u8]) -> Result<(), CpuError> {
+//        push_stack(((self.registers.pc & 0xff00) >> 8) as u8, mem, &mut self.registers)?;
+//        push_stack((self.registers.pc & 0x00ff) as u8, mem, &mut self.registers)?;
+//        push_stack(u8::from(&self.registers.status), mem, &mut self.registers)?;
+        push_cpu_state(self, mem)?;
+        let low = read_mem_raw(0xfffa, mem)?;
+        let hi = read_mem_raw(0xfffb, mem)?;
+        self.registers.pc = ((hi as u16) << 8) | low as u16;
+        Ok(())
+    }
+
     pub fn interrupt_request(&mut self, mem: &mut [u8]) -> Result<bool, CpuError> {
         if !self.registers.status.interrupt {
-            push_stack(((self.registers.pc & 0xff00) >> 8) as u8, mem, &mut self.registers)?;
-            push_stack((self.registers.pc & 0x00ff) as u8, mem, &mut self.registers)?;
-            push_stack(u8::from(&self.registers.status), mem, &mut self.registers)?;
+//            push_stack(((self.registers.pc & 0xff00) >> 8) as u8, mem, &mut self.registers)?;
+//            push_stack((self.registers.pc & 0x00ff) as u8, mem, &mut self.registers)?;
+//            push_stack(u8::from(&self.registers.status), mem, &mut self.registers)?;
+            push_cpu_state(self, mem)?;
             let low = read_mem_raw(0xfffe, mem)?;
             let hi = read_mem_raw(0xffff, mem)?;
             self.registers.pc = ((hi as u16) << 8) | low as u16;
+            return Ok(true);
         }
 
-        Ok(true)
+        Ok(false)
     }
 }
 

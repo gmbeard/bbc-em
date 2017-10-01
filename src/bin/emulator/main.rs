@@ -92,6 +92,7 @@ fn emulator() -> Result<(), io::Error> {
     assert_eq!(MEM_SIZE, mem.len());
 
     let mut cpu = Cpu::new();
+    let mut timer = Timer::new();
 
     cpu.initialize(&mut mem).unwrap();
 
@@ -100,7 +101,14 @@ fn emulator() -> Result<(), io::Error> {
 
         while frame_cycles < CYCLES_PER_FRAME {
             match cpu.step(&mut mem) {
-                Ok(cycles) => frame_cycles += cycles,
+                Ok(cycles) => {
+                    frame_cycles += cycles;
+                    if timer.step(cycles) {
+                        if cpu.interrupt_request(&mut mem).unwrap() {
+                            println!("** Interrupt requested **");
+                        }
+                    }
+                },
                 Err(CpuError::Paused) => break,
                 Err(e) => return Err(io::Error::new(io::ErrorKind::Other, e))
             }
