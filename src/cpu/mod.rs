@@ -465,6 +465,7 @@ pub enum StackError {
 pub enum CpuError {
     Memory(MemoryAccessError),
     Stack(StackError),
+    InvalidInstruction,
     Paused,
 }
 
@@ -490,6 +491,7 @@ impl Error for CpuError {
             CpuError::Memory(ref e) => e.description(),
             CpuError::Stack(ref e) => e.description(),
             CpuError::Paused => "CPU paused",
+            CpuError::InvalidInstruction => "Invalid instruction",
         }
     }
 }
@@ -521,6 +523,12 @@ impl From<StackError> for CpuError {
 impl From<MemoryAccessError> for StackError {
     fn from(_: MemoryAccessError) -> StackError {
         StackError::Unavailable
+    }
+}
+
+impl From<InstructionDecodeError> for CpuError {
+    fn from(_: InstructionDecodeError) -> CpuError {
+        CpuError::InvalidInstruction
     }
 }
 
@@ -1125,9 +1133,6 @@ impl Cpu {
     }
 
     pub fn non_maskable_interrupt(&mut self, mem: &mut [u8]) -> Result<(), CpuError> {
-//        push_stack(((self.registers.pc & 0xff00) >> 8) as u8, mem, &mut self.registers)?;
-//        push_stack((self.registers.pc & 0x00ff) as u8, mem, &mut self.registers)?;
-//        push_stack(u8::from(&self.registers.status), mem, &mut self.registers)?;
         push_cpu_state(self, mem)?;
         let low = read_mem_raw(0xfffa, mem)?;
         let hi = read_mem_raw(0xfffb, mem)?;
@@ -1137,9 +1142,9 @@ impl Cpu {
 
     pub fn interrupt_request(&mut self, mem: &mut [u8]) -> Result<bool, CpuError> {
         if !self.registers.status.interrupt {
-//            push_stack(((self.registers.pc & 0xff00) >> 8) as u8, mem, &mut self.registers)?;
-//            push_stack((self.registers.pc & 0x00ff) as u8, mem, &mut self.registers)?;
-//            push_stack(u8::from(&self.registers.status), mem, &mut self.registers)?;
+
+            write_mem_raw(0x80, 0xfe4d, mem)?;
+
             push_cpu_state(self, mem)?;
             let low = read_mem_raw(0xfffe, mem)?;
             let hi = read_mem_raw(0xffff, mem)?;
