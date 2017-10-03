@@ -1,4 +1,5 @@
 use cpu::*;
+use timer::*;
 
 pub mod debugger;
 
@@ -17,18 +18,20 @@ pub trait Emulator {
     fn mem(&self) -> &[u8];
 }
 
-struct BbcEmulator {
+pub struct BbcEmulator {
     cpu: Cpu,
+    timer: Timer,
     mem: Vec<u8>
 }
 
 impl BbcEmulator {
-    fn new() -> BbcEmulator {
+    pub fn new() -> BbcEmulator {
         use std::u16;
 
         BbcEmulator {
             cpu: Cpu::new(),
-            mem: vec![0x00; u16::MAX as usize]
+            timer: Timer::new(),
+            mem: vec![0x00; u16::MAX as usize + 1]
         }
     }
 }
@@ -44,11 +47,14 @@ impl Emulator for BbcEmulator {
     }
 
     fn initialize(&mut self) -> Result<(), CpuError> {
-        self.cpu.initialize(&self.mem)
+        self.cpu.initialize(&mut self.mem)
     }
 
     fn step(&mut self) -> Result<StepResult, CpuError> {
         let cycles = self.cpu.step(&mut self.mem)?;
+        if self.timer.step(cycles) {
+            self.cpu.interrupt_request(&mut self.mem)?;
+        }
 
         Ok(StepResult::Progressed(cycles))
     }

@@ -1118,7 +1118,10 @@ impl Cpu {
         self.registers.pc
     }
 
-    pub fn initialize(&mut self, mem: &[u8]) -> Result<(), CpuError> {
+    pub fn initialize(&mut self, mem: &mut [u8]) -> Result<(), CpuError> {
+        for b in mem[0xfe00..0xff00].iter_mut() {
+            *b = 0x00;
+        }
         let (low, _) = read_mem(&Addressing::Absolute(0xfffc), mem, &self.registers)?;
         let (hi, _) = read_mem(&Addressing::Absolute(0xfffd), mem, &self.registers)?;
         self.registers.pc = ((hi as u16) << 8) | low as u16;
@@ -1127,7 +1130,6 @@ impl Cpu {
 
     pub fn step(&mut self, mem: &mut [u8]) -> Result<usize, CpuError> {
         let (bytes, ins) = decode_instruction(&mem[self.registers.pc as usize..]).unwrap();
-        println!("{:04x} {}", self.registers.pc, ins);
         self.registers.pc += bytes as u16;
         execute_instruction(ins, mem, &mut self.registers)
     }
@@ -1143,7 +1145,8 @@ impl Cpu {
     pub fn interrupt_request(&mut self, mem: &mut [u8]) -> Result<bool, CpuError> {
         if !self.registers.status.interrupt {
 
-            write_mem_raw(0x80, 0xfe4d, mem)?;
+            write_mem_raw(0xe0, 0xfe4d, mem)?;
+            write_mem_raw(0xe0, 0xfe4e, mem)?;
 
             push_cpu_state(self, mem)?;
             let low = read_mem_raw(0xfffe, mem)?;

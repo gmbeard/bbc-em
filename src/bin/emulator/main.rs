@@ -12,9 +12,19 @@ use std::convert::AsRef;
 use std::time::{Duration, Instant};
 use std::thread;
 use std::cmp;
+use std::process;
 
 use bbc_em::cpu::*;
 use bbc_em::timer::*;
+
+use bbc_em::emulator::{self, StepResult, Emulator, BbcEmulator, debugger};
+use debugger::{
+    Debugger, 
+    DebuggerInput, 
+    DebuggerOutput, 
+    IntoDebuggerMessage,
+    FromDebuggerMessage,
+};
 
 const MEM_SIZE: usize = 1 << 16; //std::u16::MAX as usize;
 const ROM_SIZE: usize = MEM_SIZE / 4;
@@ -59,57 +69,38 @@ impl FromStr for MemoryLocation {
     }
 }
 
-fn load_rom_at<P: AsRef<Path>>(p: P, loc: u16, mem: &mut [u8]) -> io::Result<u64> {
-    fs::File::open(p)
-        .and_then(|mut f| {
-            let mut mem = io::Cursor::new(&mut mem[loc as _..]);
-            io::copy(&mut f, &mut mem)
-        })
-}
-
 const CYCLES_PER_SECOND: usize = 2_000_000;
 const SPEED_DIVISOR: usize = 1;
 const FRAMES_PER_SECOND: usize = 50;
 const CYCLES_PER_FRAME: usize = CYCLES_PER_SECOND / SPEED_DIVISOR / FRAMES_PER_SECOND;
 const MS_PER_FRAME: usize = 1000 / FRAMES_PER_SECOND;
 
-fn emulator() -> Result<(), io::Error> {
+fn run_emulator<E: Emulator>(mut emu: E, args: &[String]) -> Result<(), io::Error> {
     let mut frame_cycles = 0;
 
-    let os_rom_file = env::args()
-        .nth(1)
+    let os_rom_file = args.iter().nth(1)
         .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "No OS ROM file specified!"))?;
 
-    let lang_rom_file = env::args()
-        .nth(2)
+    let lang_rom_file = args.iter().nth(2)
         .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "No Language ROM file specified!"))?;
 
-    let mut mem = vec![0x00; MEM_SIZE];
+    let os_rom = fs::File::open(os_rom_file)?.bytes().collect::<io::Result<Vec<_>>>()?;
+    let lang_rom = fs::File::open(lang_rom_file)?.bytes().collect::<io::Result<Vec<_>>>()?;
 
-    load_rom_at(&lang_rom_file, 0x8000, &mut mem)?;
-    load_rom_at(&os_rom_file, 0xc000, &mut mem)?;
-
-    assert_eq!(MEM_SIZE, mem.len());
-
-    let mut cpu = Cpu::new();
-    let mut timer = Timer::new();
-
-    cpu.initialize(&mut mem).unwrap();
+    emu.place_rom_at(0x8000, lang_rom.as_slice());
+    emu.place_rom_at(0xc000, os_rom.as_slice());
+    emu.initialize().unwrap();
 
     loop {
         let start = Instant::now();
 
         while frame_cycles < CYCLES_PER_FRAME {
-            match cpu.step(&mut mem) {
-                Ok(cycles) => {
+            match emu.step() {
+                Ok(StepResult::Progressed(cycles)) => {
                     frame_cycles += cycles;
-                    if timer.step(cycles) {
-                        if cpu.interrupt_request(&mut mem).unwrap() {
-                            println!("** Interrupt requested **");
-                        }
-                    }
                 },
-                Err(CpuError::Paused) => break,
+                Ok(StepResult::Paused) => break,
+                Ok(StepResult::Exit) => return Ok(()),
                 Err(e) => return Err(io::Error::new(io::ErrorKind::Other, e))
             }
         }
@@ -123,7 +114,135 @@ fn emulator() -> Result<(), io::Error> {
     Ok(())
 }
 
+fn print_memory_page(num: u16, mem: Vec<u8>) {
+    println!("\tMemory at page {:04x}...\n", num);
+    let mut current_row: u32 = num as u32 & 0xff00;
+    while current_row < ((num as u32 & 0xff00) + 0x0100) {
+        print!("\t{:04x}:", current_row);
+        let current_col = current_row & 0x000f;
+        for col in current_col..0x0010 {
+            print!(" {:02x}", mem[(current_row - (num as u32 & 0xff00)) as usize + col as usize]);
+        }
+
+        println!();
+        current_row += 0x0010;
+    }
+}
+
+fn process_cmd(s: &str) -> Option<DebuggerInput> {
+    if s.starts_with("next") || s.starts_with("n ") || s == "n" {
+        let num = s.split(" ").nth(1)
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or_else(|| 1);
+        return Some(DebuggerInput::Step(num));
+    }
+
+    if s.starts_with("page") {
+        let mut parts = s.split(" ");
+        let loc = parts.nth(1).unwrap().parse::<MemoryLocation>().unwrap();
+        return Some(DebuggerInput::RequestPage(*loc as u8));
+    }
+
+    if s.starts_with("break") {
+        let loc = s.split(" ").nth(1).unwrap().parse::<MemoryLocation>().unwrap();
+        return Some(DebuggerInput::BreakPoint(*loc as u16));
+    }
+
+    println!("Unknown command: {}", s);
+
+    None
+}
+
+fn process_debugger_messages<R: Read>(mut reader: R) {
+
+    use DebuggerOutput::*;
+
+    let mut is_stream = false;
+    while let Ok(msg) = DebuggerOutput::from_debugger_message(&mut reader) {
+        match msg {
+            Message(msg) => writeln!(io::stdout(), "\t{}", msg).unwrap(),
+            Page(num, mem) => print_memory_page(num, mem),
+            StreamStart => is_stream = true,
+            StreamEnd => is_stream = false,
+            _ => {}
+        }
+
+        io::stdout().flush().unwrap();
+
+        if !is_stream {
+            break;
+        }
+    }
+}
+
+fn spawn_debugger_front_end(args: &[String]) {
+    let mut child = process::Command::new(&args[0])
+        .args(&["--attach", &args[1], &args[2]])
+        .stdout(process::Stdio::piped())
+        .stdin(process::Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut input_buffer = String::with_capacity(64);
+
+    println!("Staring debugger...");
+    process_debugger_messages(child.stdout.as_mut().unwrap());
+
+    io::stdout().flush().unwrap();
+
+    loop {
+        write!(io::stdout(), "bbc-em> ").unwrap();
+        io::stdout().flush().unwrap();
+
+        let bytes = io::stdin().read_line(&mut input_buffer).unwrap();
+        let msg = match &input_buffer[..bytes-2] {
+            "continue" | "c" => Some(DebuggerInput::Continue),
+            "quit" => break,
+            _ => process_cmd(&input_buffer[..bytes-2]),
+        };
+
+        input_buffer.clear();
+
+        if let Some(msg) = msg {
+            msg.into_debugger_message(child.stdin.as_mut().unwrap()).unwrap();
+            child.stdin.as_mut().unwrap().flush().unwrap();
+        }
+        else {
+            continue;
+        }
+        
+        process_debugger_messages(child.stdout.as_mut().unwrap());
+    }
+
+    child.kill().unwrap();
+}
+
 fn main() {
-    emulator().unwrap();
+    let mut args = env::args().collect::<Vec<_>>();
+    let mut debug = false;
+    let mut attach = false;
+
+    args.iter()
+        .position(|i| *i == "--debug")
+        .map(|i| {
+            args.remove(i);
+            debug = true;
+        });
+
+    args.iter()
+        .position(|i| *i == "--attach")
+        .map(|i| {
+            args.remove(i);
+            attach = true
+        });
+
+    match (debug, attach) {
+        (true, false) => spawn_debugger_front_end(&args),
+        (false, true) => run_emulator(Debugger::new(BbcEmulator::new()), &args).unwrap(),
+        (false, false) => run_emulator(BbcEmulator::new(), &args).unwrap(),
+        _ => {
+            eprintln!("--debug and --attach flags cannot be used together");
+        }
+    }
 }
 
