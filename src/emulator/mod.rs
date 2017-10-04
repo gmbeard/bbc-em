@@ -1,8 +1,6 @@
 use cpu::*;
 use timer::*;
 
-pub mod debugger;
-
 #[derive(Debug)]
 pub enum StepResult {
     Progressed(usize),

@@ -3,31 +3,25 @@ extern crate bbc_em;
 use std::env;
 use std::io::{Read, Write};
 use std::fs;
-use std::path::Path;
 use std::str::{self, FromStr};
-use std::slice;
 use std::io;
 use std::ops::{Deref, DerefMut};
-use std::convert::AsRef;
 use std::time::{Duration, Instant};
 use std::thread;
 use std::cmp;
 use std::process;
 
-use bbc_em::cpu::*;
-use bbc_em::timer::*;
+use bbc_em::emulator::{StepResult, Emulator, BbcEmulator};
+use bbc_em::debugger::{
+    Backend, 
+};
 
-use bbc_em::emulator::{self, StepResult, Emulator, BbcEmulator, debugger};
-use debugger::{
-    Debugger, 
-    DebuggerInput, 
-    DebuggerOutput, 
+use bbc_em::debugger::protocol::{
+    DebuggerCmd, 
+    DebuggerResponse, 
     IntoDebuggerMessage,
     FromDebuggerMessage,
 };
-
-const MEM_SIZE: usize = 1 << 16; //std::u16::MAX as usize;
-const ROM_SIZE: usize = MEM_SIZE / 4;
 
 #[derive(Debug)]
 struct MemoryLocation(u16);
@@ -129,23 +123,23 @@ fn print_memory_page(num: u16, mem: Vec<u8>) {
     }
 }
 
-fn process_cmd(s: &str) -> Option<DebuggerInput> {
+fn process_cmd(s: &str) -> Option<DebuggerCmd> {
     if s.starts_with("next") || s.starts_with("n ") || s == "n" {
         let num = s.split(" ").nth(1)
             .and_then(|s| s.parse::<u32>().ok())
             .unwrap_or_else(|| 1);
-        return Some(DebuggerInput::Step(num));
+        return Some(DebuggerCmd::Step(num));
     }
 
     if s.starts_with("page") {
         let mut parts = s.split(" ");
         let loc = parts.nth(1).unwrap().parse::<MemoryLocation>().unwrap();
-        return Some(DebuggerInput::RequestPage(*loc as u8));
+        return Some(DebuggerCmd::RequestPage(*loc as u8));
     }
 
     if s.starts_with("break") {
         let loc = s.split(" ").nth(1).unwrap().parse::<MemoryLocation>().unwrap();
-        return Some(DebuggerInput::BreakPoint(*loc as u16));
+        return Some(DebuggerCmd::BreakPoint(*loc as u16));
     }
 
     println!("Unknown command: {}", s);
@@ -155,10 +149,10 @@ fn process_cmd(s: &str) -> Option<DebuggerInput> {
 
 fn process_debugger_messages<R: Read>(mut reader: R) {
 
-    use DebuggerOutput::*;
+    use DebuggerResponse::*;
 
     let mut is_stream = false;
-    while let Ok(msg) = DebuggerOutput::from_debugger_message(&mut reader) {
+    while let Ok(msg) = DebuggerResponse::from_debugger_message(&mut reader) {
         match msg {
             Message(msg) => writeln!(io::stdout(), "\t{}", msg).unwrap(),
             Page(num, mem) => print_memory_page(num, mem),
@@ -196,7 +190,7 @@ fn spawn_debugger_front_end(args: &[String]) {
 
         let bytes = io::stdin().read_line(&mut input_buffer).unwrap();
         let msg = match &input_buffer[..bytes-2] {
-            "continue" | "c" => Some(DebuggerInput::Continue),
+            "continue" | "c" => Some(DebuggerCmd::Continue),
             "quit" => break,
             _ => process_cmd(&input_buffer[..bytes-2]),
         };
@@ -238,7 +232,7 @@ fn main() {
 
     match (debug, attach) {
         (true, false) => spawn_debugger_front_end(&args),
-        (false, true) => run_emulator(Debugger::new(BbcEmulator::new()), &args).unwrap(),
+        (false, true) => run_emulator(Backend::new(BbcEmulator::new()), &args).unwrap(),
         (false, false) => run_emulator(BbcEmulator::new(), &args).unwrap(),
         _ => {
             eprintln!("--debug and --attach flags cannot be used together");
