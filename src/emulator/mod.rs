@@ -9,9 +9,11 @@ pub enum StepResult {
 }
 
 pub trait Emulator {
+    type Error;
+
     fn place_rom_at(&mut self, location: u16, rom: &[u8]);
-    fn initialize(&mut self) -> Result<(), CpuError>;
-    fn step(&mut self) -> Result<StepResult, CpuError>;
+    fn initialize(&mut self) -> Result<(), Self::Error>;
+    fn step(&mut self) -> Result<StepResult, Self::Error>;
     fn cpu(&self) -> &Cpu;
     fn mem(&self) -> &[u8];
 }
@@ -35,6 +37,8 @@ impl BbcEmulator {
 }
 
 impl Emulator for BbcEmulator {
+    type Error = CpuError;
+
     fn place_rom_at(&mut self, location: u16, rom: &[u8]) {
         use std::io::{self, Cursor};
 

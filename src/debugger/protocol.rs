@@ -10,6 +10,7 @@ pub enum DebuggerCmd {
     RequestPage(u8),
     BreakPoint(u16),
     Unknown(u8),
+    RequestCpuState,
 }
 
 #[derive(Debug)]
@@ -20,6 +21,7 @@ pub enum DebuggerResponse {
     Unknown(u8),
     StreamStart,
     StreamEnd,
+    CpuState(cpu::Registers),
 }
 
 unsafe impl Send for DebuggerCmd { }
@@ -60,7 +62,8 @@ impl FromDebuggerMessage for DebuggerCmd {
             0x05 => {
                 let loc = vec[0] as u16 | (vec[1] as u16) << 8;
                 DebuggerCmd::BreakPoint(loc)
-            }
+            },
+            0x06 => DebuggerCmd::RequestCpuState,
             _ => DebuggerCmd::Unknown(id),
         };
 
@@ -94,6 +97,18 @@ impl FromDebuggerMessage for DebuggerResponse {
                     str::from_utf8(&buf)
                         .map_err(|e|io::Error::new(io::ErrorKind::Other, e))?
                         .to_string()
+                )
+            },
+            0x04 => {
+                DebuggerResponse::CpuState(
+                    cpu::Registers {
+                        pc: buf[0] as u16 | (buf[1] as u16) << 8,
+                        sp: buf[2],
+                        acc: buf[3],
+                        x: buf[4],
+                        y: buf[5],
+                        status: cpu::StatusFlags::from(buf[6]),
+                    }
                 )
             },
             0xfd => DebuggerResponse::StreamStart,
@@ -135,7 +150,11 @@ impl IntoDebuggerMessage for DebuggerCmd {
             DebuggerCmd::BreakPoint(ref loc) => {
                 writer.write_all(&[0x05, 0x02, 0x00, (*loc as u8) & 0xff, (*loc >> 8) as u8])?;
                 5
-            }
+            },
+            DebuggerCmd::RequestCpuState => {
+                writer.write_all(&[0x06, 0x00, 0x00])?;
+                3
+            },
             DebuggerCmd::Unknown(_) => {
                 writer.write_all(&[0xff, 0x00, 0x00])?;
                 3
@@ -179,6 +198,23 @@ impl IntoDebuggerMessage for DebuggerResponse {
                 writer.write_all(mem)?;
 
                 mem.len() + 1
+            },
+
+            DebuggerResponse::CpuState(ref reg) => {
+                writer.write_all(&[
+                    0x04,
+                    0x07,
+                    0x00,
+                    reg.pc as u8,
+                    (reg.pc >> 8) as u8,
+                    reg.sp,
+                    reg.acc,
+                    reg.x,
+                    reg.y,
+                    u8::from(&reg.status)
+                ])?;
+
+                10
             },
 
             DebuggerResponse::Unknown(_) => {

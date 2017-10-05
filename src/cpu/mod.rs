@@ -112,15 +112,15 @@ impl fmt::Display for Instruction {
 #[derive(Debug, PartialEq)]
 pub struct InstructionDecodeError;
 
-#[derive(Debug, PartialEq)]
-struct StatusFlags {
-    negative: bool,
-    overflow: bool,
-    brk: bool,
-    decimal: bool,
-    interrupt: bool,
-    zero: bool,
-    carry: bool,
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub struct StatusFlags {
+    pub negative: bool,
+    pub overflow: bool,
+    pub brk: bool,
+    pub decimal: bool,
+    pub interrupt: bool,
+    pub zero: bool,
+    pub carry: bool,
 }
 
 impl StatusFlags  {
@@ -177,19 +177,19 @@ impl From<u8> for StatusFlags {
     }
 }
 
-#[derive(Debug, PartialEq)]
-struct Registers {
-    pc: u16,
-    sp: u8,
-    acc: u8,
-    x: u8,
-    y: u8,
-    status: StatusFlags
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub struct Registers {
+    pub pc: u16,
+    pub sp: u8,
+    pub acc: u8,
+    pub x: u8,
+    pub y: u8,
+    pub status: StatusFlags
 }
 
 
 impl Registers {
-    fn new() -> Registers {
+    pub fn new() -> Registers {
         Registers {
             pc: 0,
             sp: 0,
@@ -1116,6 +1116,10 @@ impl Cpu {
 
     pub fn program_counter(&self) -> u16 {
         self.registers.pc
+    }
+
+    pub fn registers(&self) -> &Registers {
+        &self.registers
     }
 
     pub fn initialize(&mut self, mem: &mut [u8]) -> Result<(), CpuError> {

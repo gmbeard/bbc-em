@@ -4,8 +4,9 @@ use std::io::{self, Write};
 
 use super::*;
 use self::protocol::{DebuggerCmd, DebuggerResponse, IntoDebuggerMessage, FromDebuggerMessage};
-use emulator::*;
+use emulator::{StepResult, Emulator};
 use cpu::{self, Cpu, CpuError};
+use self::error::*;
 
 enum DebuggerState {
     Stop,
@@ -27,11 +28,13 @@ pub struct Backend<T> {
 fn listener(tx: Sender<DebuggerCmd>) -> io::Result<()> {
     let stdin = io::stdin();
     let mut lock = stdin.lock();
-    while let Ok(cmd) = DebuggerCmd::from_debugger_message(&mut lock) {
+    loop {
+        let cmd = DebuggerCmd::from_debugger_message(&mut lock)?;
         if let Err(_) = tx.send(cmd) {
             break;
         }
     }
+
     Ok(())
 }
 
@@ -44,7 +47,10 @@ fn sender(rx: Receiver<DebuggerResponse>) -> io::Result<()> {
     Ok(())
 }
 
-impl<T: Emulator> Backend<T> {
+impl<T> Backend<T>
+    where T: Emulator,
+          DebuggerError: From<T::Error>
+{
     pub fn new(emulator: T) -> Backend<T> {
         let (tx, incoming) = channel();
         let (outgoing, rx) = channel();
@@ -67,25 +73,28 @@ impl<T: Emulator> Backend<T> {
                     DebuggerCmd::Step(num) => { 
                         self.state = DebuggerState::Step(num);
                         self.active_breakpoint.take();
-                        self.outgoing.send(DebuggerResponse::StreamStart).unwrap();
+                        self.outgoing.send(DebuggerResponse::StreamStart).ok();
                     },
                     DebuggerCmd::Continue => { 
                         self.state = DebuggerState::Run;
                         self.active_breakpoint.take();
                     },
-//                    DebuggerCmd::Restart => { self.state = DebuggerState::Restart; },
                     DebuggerCmd::RequestPage(page) => {
-                        let hi = (page as u32) << 8;
-                        let next = hi + 0x0100;
-                        self.outgoing.send(
-                            DebuggerResponse::Page(hi as u16, self.mem()[hi as usize..next as usize].to_vec())
-                        ).unwrap();
+                        let (start, end) = (
+                            ((page as u32) << 8) as usize,
+                            (((page as u32) << 8) + 0x0100) as usize
+                        );
+                        let mem = self.mem()[start..end].to_vec();
+                        self.outgoing.send(DebuggerResponse::Page(start as u16, mem)).ok();
                     },
                     DebuggerCmd::BreakPoint(loc) => { 
                         self.breakpoints.push(loc);
-                        self.outgoing.send(
-                            DebuggerResponse::Message(format!("Breakpoint set to {:4x}", loc))
-                        ).unwrap();
+                        let msg = format!("Breakpoint set to {:4x}", loc);
+                        self.outgoing.send(DebuggerResponse::Message(msg)).ok();
+                    },
+                    DebuggerCmd::RequestCpuState => {
+                        let reg = self.emulator.cpu().registers();
+                        self.outgoing.send(DebuggerResponse::CpuState(*reg)).ok();
                     },
                     _ => {}
                 }
@@ -99,22 +108,27 @@ impl<T: Emulator> Backend<T> {
 
     fn send_current_instruction(&mut self) -> Result<(), CpuError> {
         let (_, ins) = cpu::decode_instruction(&self.mem()[self.cpu().program_counter() as usize..])?;
-        self.outgoing.send(DebuggerResponse::Instruction(self.cpu().program_counter(), ins)).unwrap();
+        self.outgoing.send(DebuggerResponse::Instruction(self.cpu().program_counter(), ins)).ok();
         Ok(())
     }
 }
 
-impl<T: Emulator> Emulator for Backend<T> {
+impl<T> Emulator for Backend<T> 
+    where T: Emulator,
+          DebuggerError: From<T::Error>
+{
+    type Error = DebuggerError;
+
     fn place_rom_at(&mut self, location: u16, rom: &[u8]) {
         self.emulator.place_rom_at(location, rom)
     }
 
-    fn initialize(&mut self) -> Result<(), CpuError> {
+    fn initialize(&mut self) -> Result<(), Self::Error> {
         self.emulator.initialize()?;
-        self.send_current_instruction()
+        Ok(self.send_current_instruction()?)
     }
 
-    fn step(&mut self) -> Result<StepResult, CpuError> {
+    fn step(&mut self) -> Result<StepResult, Self::Error> {
 
         if self.process_debugger_queue().is_none() {
             return Ok(StepResult::Exit);

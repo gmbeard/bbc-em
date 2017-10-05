@@ -7,3 +7,8 @@ authors = ["Greg Beard <greg.beard@vodafone.com>"]
 name = "bbc_em"
 path = "src/lib.rs"
 
+[dependencies]
+kernel32-sys = "*"
+winapi = "*"
+minifb = "*"
+
