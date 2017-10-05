@@ -61,24 +61,53 @@ impl From<Error> for ApplicationError {
     }
 }
 
-fn update_buffer(buf: &mut [u32], rows: usize, cycles: u64) {
-    let cols = buf.len() / rows;
-    let cycles = cycles / 1000;
-    let cycle_row = cycles % rows as u64;
-    let cycle_col = cycles % cols as u64;
+fn update_buffer(buf: &mut [u32], cols: usize, rows: usize, cycles: u64) {
+    use std::cmp;
 
-    for y in 0..rows {
-        for x in 0..cols {
-            let y_distance = ((rows + cycle_row as usize - y) % rows);
-            let x_distance = ((cols + cycle_col as usize - x) % cols);
-            let distance = (((x_distance * 2) + (y_distance * 2)) as f32).sqrt().trunc() as u8;
+    const SCALE: usize = 30;
+//    let cols = buf.len() / rows;
+    let cycles = cycles as usize / 2500;
+    let cycle_row = cycles / cols * SCALE % rows;
+    let cycle_col = cycles % cols;
 
-            buf[x * y] = (distance as u32 |
-                         (distance as u32) << 8 |
-                         (distance as u32) << 16 |
-                         (distance as u32) << 24) * 2;
+    for (i, b) in buf.iter_mut().enumerate() {
+        let row = i / cols % rows;
+        let col = i % cols;
+        
+        *b = if (row >= cycle_row && row < cycle_row + SCALE) 
+            && (col > cycle_col && col < cycle_col + SCALE) {
+            0xffffffff
         }
+        else {
+            let mut alpha = (*b & 0xff000000) >> 24;
+            let mut red = (*b & 0x00ff0000) >> 16;
+            let mut green = (*b & 0x0000ff00) >> 8;
+            let mut blue = (*b & 0x000000ff);
+            
+            alpha = cmp::max(0xff, alpha + 0xff - 8) - 0xff;
+            red = cmp::max(0xff, red + 0xff - 8) - 0xff;
+            green = cmp::max(0xff, green + 0xff - 8) - 0xff;
+            blue = cmp::max(0xff, blue + 0xff - 8) - 0xff;
+
+            0xff << 24 | red << 16 | green << 8 | blue
+        };
+
     }
+//    for y in 0..rows {
+//        for x in 0..cols {
+// 
+//            buf[x * y] = 0xffffffff;
+//            let current = buf[x * y];
+//            buf[x * y] = {
+//                if (x / SCALE) * (y / SCALE) == (cycle_row / SCALE) * (cycle_col / SCALE) {
+//                    0
+//                }
+//                else {
+//                    0xffffffff
+//                }
+//            };
+//        }
+//    }
 }
 
 fn run_emulator<E>(mut emu: E, args: &[String]) -> Result<(), ApplicationError>
@@ -123,7 +152,7 @@ fn run_emulator<E>(mut emu: E, args: &[String]) -> Result<(), ApplicationError>
 
         total_cycles += frame_cycles as u64;
 
-        update_buffer(&mut buf, 480, total_cycles);
+        update_buffer(&mut buf, 640, 480, total_cycles);
         window.update_with_buffer(&buf).unwrap();
 
         frame_cycles -= cmp::min(CYCLES_PER_FRAME, frame_cycles);
