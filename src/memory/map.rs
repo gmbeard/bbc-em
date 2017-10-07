@@ -30,6 +30,49 @@ fn value_within_range<T>(val: T, range: &Range<T>) -> bool
     (val >= range.start && val <= range.end)
 }
 
+pub trait MemoryMap {
+    fn last_hw_read(&self) -> Option<u16>;
+    fn last_hw_write(&self) -> Option<(u16, u8)>;
+    fn write(&mut self, loc: u16, val: u8);
+    fn read(&mut self, loc: u16) -> u8;
+}
+
+pub trait AsMemoryRegion {
+    fn len(&self) -> usize;
+
+    fn region_mut<'a>(&'a mut self, range: Range<usize>)
+        -> Result<RegionMut<'a>, RawAccessToHardwareError<RegionMut<'a>>>;
+
+    fn region<'a>(&'a self, range: Range<usize>) 
+        -> Result<Region<'a>, RawAccessToHardwareError<Region<'a>>>;
+
+    fn region_from<'a>(&'a self, range: RangeFrom<usize>)
+        -> Result<Region<'a>, RawAccessToHardwareError<Region<'a>>>
+    {
+        let len = self.len();
+        self.region(range.start..len)
+    }
+
+    fn region_from_mut<'a>(&'a mut self, range: RangeFrom<usize>)
+        -> Result<RegionMut<'a>, RawAccessToHardwareError<RegionMut<'a>>>
+    {
+        let len = self.len();
+        self.region_mut(range.start..len)
+    }
+
+    fn region_to<'a>(&'a self, range: RangeTo<usize>)
+        -> Result<Region<'a>, RawAccessToHardwareError<Region<'a>>>
+    {
+        self.region(0..range.end)
+    }
+
+    fn region_to_mut<'a>(&'a mut self, range: RangeTo<usize>)
+        -> Result<RegionMut<'a>, RawAccessToHardwareError<RegionMut<'a>>>
+    {
+        self.region_mut(0..range.end)
+    }
+}
+
 impl Map {
     pub fn new() -> Map {
         Map {
@@ -52,17 +95,19 @@ impl Map {
         self.hw_ranges.extend(ranges.into_iter().collect::<Vec<_>>());
         self
     }
+}
 
-    pub fn last_hw_read(&self) -> Option<u16> {
+impl MemoryMap for Map {
+    fn last_hw_read(&self) -> Option<u16> {
         self.last_hw_read
     }
 
-    pub fn last_hw_write(&self) -> Option<(u16, u8)> {
+    fn last_hw_write(&self) -> Option<(u16, u8)> {
         self.last_hw_write
     }
 
     /// Panics if `loc` is greater than `u16::MAX + 1`
-    pub fn write(&mut self, loc: u16, val: u8) {
+    fn write(&mut self, loc: u16, val: u8) {
         self.bytes[loc as usize] = val;
         if self.hw_ranges.iter()
                          .any(|r| value_within_range(loc as usize, &r))
@@ -78,7 +123,7 @@ impl Map {
     ///
     /// This function requires `&mut self` because reading can potentially
     /// have side effects, such as clearing hardware registers, etc.
-    pub fn read(&mut self, loc: u16) -> u8 {
+    fn read(&mut self, loc: u16) -> u8 {
         let val = self.bytes[loc as usize];
         if self.hw_ranges.iter()
                          .any(|r| value_within_range(loc as usize, &r))
@@ -92,6 +137,13 @@ impl Map {
         val
     }
 
+}
+
+impl AsMemoryRegion for Map {
+    fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
     /// Allows raw, immutable access to the underlying memory region. 
     ///
     /// The function will return a `RawAccessToHardwareError(Region(..))` if the 
@@ -99,7 +151,7 @@ impl Map {
     /// The error response still contains the requested region. This serves
     /// to indicate to the caller that they're potentially accessing a 
     /// region of memory that would otherwise generate side effects
-    pub fn region_mut<'a>(&'a mut self, range: Range<usize>) 
+    fn region_mut<'a>(&'a mut self, range: Range<usize>) 
         -> Result<RegionMut<'a>, RawAccessToHardwareError<RegionMut<'a>>>
     {
         if self.hw_ranges.iter().any(|r| ranges_overlap(r.clone(), &range)) {
@@ -118,7 +170,7 @@ impl Map {
     /// The error response still contains the requested region. This serves
     /// to indicate to the caller that they're potentially accessing a 
     /// region of memory that would otherwise generate side effects
-    pub fn region<'a>(&'a self, range: Range<usize>) 
+    fn region<'a>(&'a self, range: Range<usize>) 
         -> Result<Region<'a>, RawAccessToHardwareError<Region<'a>>> 
     {
         if self.hw_ranges.iter().any(|r| ranges_overlap(r.clone(), &range)) {
@@ -127,33 +179,6 @@ impl Map {
         else {
             Ok(Region(&self.bytes[range]))
         }
-
-    }
-
-    pub fn region_from<'a>(&'a self, range: RangeFrom<usize>)
-        -> Result<Region<'a>, RawAccessToHardwareError<Region<'a>>>
-    {
-        let len = self.bytes.len();
-        self.region(range.start..len)
-    }
-
-    pub fn region_from_mut<'a>(&'a mut self, range: RangeFrom<usize>)
-        -> Result<RegionMut<'a>, RawAccessToHardwareError<RegionMut<'a>>>
-    {
-        let len = self.bytes.len();
-        self.region_mut(range.start..len)
-    }
-
-    pub fn region_to<'a>(&'a self, range: RangeTo<usize>)
-        -> Result<Region<'a>, RawAccessToHardwareError<Region<'a>>>
-    {
-        self.region(0..range.end)
-    }
-
-    pub fn region_to_mut<'a>(&'a mut self, range: RangeTo<usize>)
-        -> Result<RegionMut<'a>, RawAccessToHardwareError<RegionMut<'a>>>
-    {
-        self.region_mut(0..range.end)
     }
 }
 
