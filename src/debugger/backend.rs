@@ -7,6 +7,7 @@ use self::protocol::{DebuggerCmd, DebuggerResponse, IntoDebuggerMessage, FromDeb
 use emulator::{StepResult, Emulator};
 use cpu::{self, Cpu, CpuError};
 use self::error::*;
+use memory::AsMemoryRegion;
 
 enum DebuggerState {
     Stop,
@@ -84,7 +85,12 @@ impl<T> Backend<T>
                             ((page as u32) << 8) as usize,
                             (((page as u32) << 8) + 0x0100) as usize
                         );
-                        let mem = self.mem()[start..end].to_vec();
+                        let mem = self.mem()
+                                      .region(start..end)
+                                      .unwrap_or_else(|e| e.0)
+                                      .iter()
+                                      .map(|b| *b)
+                                      .collect::<Vec<_>>();
                         self.outgoing.send(DebuggerResponse::Page(start as u16, mem)).ok();
                     },
                     DebuggerCmd::BreakPoint(loc) => { 
@@ -107,7 +113,12 @@ impl<T> Backend<T>
     }
 
     fn send_current_instruction(&mut self) -> Result<(), CpuError> {
-        let (_, ins) = cpu::decode_instruction(&self.mem()[self.cpu().program_counter() as usize..])?;
+
+        let instruction_region = 
+            self.mem()
+                .region(self.cpu().program_counter() as _..self.cpu().program_counter() as usize + 4)
+                .unwrap_or_else(|e| e.0);
+        let (_, ins) = cpu::decode_instruction(&instruction_region)?;
         self.outgoing.send(DebuggerResponse::Instruction(self.cpu().program_counter(), ins)).ok();
         Ok(())
     }
@@ -118,6 +129,7 @@ impl<T> Emulator for Backend<T>
           DebuggerError: From<T::Error>
 {
     type Error = DebuggerError;
+    type Memory = T::Memory;
 
     fn place_rom_at(&mut self, location: u16, rom: &[u8]) {
         self.emulator.place_rom_at(location, rom)
@@ -172,7 +184,7 @@ impl<T> Emulator for Backend<T>
         self.emulator.cpu()
     }
 
-    fn mem(&self) -> &[u8] {
+    fn mem(&self) -> &Self::Memory {
         self.emulator.mem()
     }
 }

@@ -1,10 +1,27 @@
 use std::ops::{Deref, DerefMut};
 use std::convert::{AsRef, AsMut};
+use std::slice::{Iter, IterMut};
 
 #[derive(Debug)]
 pub struct Region<'a>(pub(crate) &'a [u8]);
 #[derive(Debug)]
 pub struct RegionMut<'a>(pub(crate) &'a mut [u8]);
+
+impl<'a> Region<'a> {
+    fn iter(&'a self) -> Iter<'a, u8> {
+        self.0.iter()
+    }
+}
+
+impl<'a> RegionMut<'a> {
+    fn iter(&'a self) -> Iter<'a, u8> {
+        self.0.iter()
+    }
+
+    fn iter_mut(&'a mut self) -> IterMut<'a, u8> {
+        self.0.iter_mut()
+    }
+}
 
 impl<'a> Deref for Region<'a> {
     type Target = [u8];

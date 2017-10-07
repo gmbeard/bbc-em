@@ -19,6 +19,7 @@ use bbc_em::debugger::{
     FrontEnd,
     FrontEndError,
 };
+use bbc_em::memory::Map;
 
 use bbc_em::debugger::Error;
 
@@ -185,8 +186,16 @@ fn main() {
 
     match (debug, attach) {
         (true, false) => FrontEnd::with_args(&args).run().unwrap(),
-        (false, true) => run_emulator(Backend::new(BbcEmulator::new()), &args).unwrap(),
-        (false, false) => run_emulator(BbcEmulator::new(), &args).unwrap(),
+        (false, true) => {
+            let map = Map::new().with_hw_range(0xfe00..0xff00)
+                                .with_hw_range(0x8000..0xc000);
+            run_emulator(Backend::new(BbcEmulator::with_memory(map)), &args).unwrap();
+        }
+        (false, false) => {
+            let map = Map::new().with_hw_range(0xfe00..0xff00)
+                                .with_hw_range(0x8000..0xc000);
+            run_emulator(BbcEmulator::with_memory(map), &args).unwrap();
+        }
         _ => {
             eprintln!("--debug and --attach flags cannot be used together");
         }

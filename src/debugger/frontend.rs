@@ -266,6 +266,7 @@ impl<'a> FrontEnd<'a> {
             .args(&["--attach", &self.0[1], &self.0[2]])
             .stdout(process::Stdio::piped())
             .stdin(process::Stdio::piped())
+            .stderr(process::Stdio::inherit())
             .spawn()?;
 
         unsafe { signal::SetConsoleCtrlHandler(None, signal::FALSE) };

@@ -1,5 +1,6 @@
 use cpu::*;
 use timer::*;
+use memory::*;
 
 #[derive(Debug)]
 pub enum StepResult {
@@ -10,41 +11,47 @@ pub enum StepResult {
 
 pub trait Emulator {
     type Error;
+    type Memory: MemoryMap + AsMemoryRegionMut;
 
     fn place_rom_at(&mut self, location: u16, rom: &[u8]);
     fn initialize(&mut self) -> Result<(), Self::Error>;
     fn step(&mut self) -> Result<StepResult, Self::Error>;
     fn cpu(&self) -> &Cpu;
-    fn mem(&self) -> &[u8];
+    fn mem(&self) -> &Self::Memory;
 }
 
-pub struct BbcEmulator {
+pub struct BbcEmulator<M> {
     cpu: Cpu,
     timer: Timer,
-    mem: Vec<u8>
+    mem: M
 }
 
-impl BbcEmulator {
-    pub fn new() -> BbcEmulator {
+impl<M> BbcEmulator<M> {
+    pub fn with_memory(mem: M) -> BbcEmulator<M> {
         use std::u16;
 
         BbcEmulator {
             cpu: Cpu::new(),
             timer: Timer::new(),
-            mem: vec![0x00; u16::MAX as usize + 1]
+            mem: mem
         }
     }
 }
 
-impl Emulator for BbcEmulator {
+impl<M> Emulator for BbcEmulator<M> 
+    where M: MemoryMap + AsMemoryRegionMut
+{
     type Error = CpuError;
+    type Memory = M;
 
     fn place_rom_at(&mut self, location: u16, rom: &[u8]) {
         use std::io::{self, Cursor};
 
+        let mut region = self.mem.region_from_mut(location as _..)
+                                 .unwrap_or_else(|e| e.0);
         io::copy(
             &mut Cursor::new(rom), 
-            &mut Cursor::new(&mut self.mem[location as usize..])
+            &mut Cursor::new(region.as_mut())
         ).unwrap();
     }
 
@@ -65,7 +72,7 @@ impl Emulator for BbcEmulator {
         &self.cpu
     }
 
-    fn mem(&self) -> &[u8] {
+    fn mem(&self) -> &M {
         &self.mem
     }
 }

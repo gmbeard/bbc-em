@@ -13,7 +13,7 @@ pub struct Map {
 }
 
 #[derive(Debug)]
-pub struct RawAccessToHardwareError<T>(T);
+pub struct RawAccessToHardwareError<T>(pub T);
 
 fn ranges_overlap<T>(section: Range<T>, rhs: &Range<T>) -> bool 
     where T: PartialOrd
@@ -37,11 +37,26 @@ pub trait MemoryMap {
     fn read(&mut self, loc: u16) -> u8;
 }
 
-pub trait AsMemoryRegion {
-    fn len(&self) -> usize;
-
+pub trait AsMemoryRegionMut : AsMemoryRegion {
     fn region_mut<'a>(&'a mut self, range: Range<usize>)
         -> Result<RegionMut<'a>, RawAccessToHardwareError<RegionMut<'a>>>;
+
+    fn region_from_mut<'a>(&'a mut self, range: RangeFrom<usize>)
+        -> Result<RegionMut<'a>, RawAccessToHardwareError<RegionMut<'a>>>
+    {
+        let len = self.len();
+        self.region_mut(range.start..len)
+    }
+
+    fn region_to_mut<'a>(&'a mut self, range: RangeTo<usize>)
+        -> Result<RegionMut<'a>, RawAccessToHardwareError<RegionMut<'a>>>
+    {
+        self.region_mut(0..range.end)
+    }
+}
+
+pub trait AsMemoryRegion {
+    fn len(&self) -> usize;
 
     fn region<'a>(&'a self, range: Range<usize>) 
         -> Result<Region<'a>, RawAccessToHardwareError<Region<'a>>>;
@@ -53,23 +68,73 @@ pub trait AsMemoryRegion {
         self.region(range.start..len)
     }
 
-    fn region_from_mut<'a>(&'a mut self, range: RangeFrom<usize>)
-        -> Result<RegionMut<'a>, RawAccessToHardwareError<RegionMut<'a>>>
-    {
-        let len = self.len();
-        self.region_mut(range.start..len)
-    }
-
     fn region_to<'a>(&'a self, range: RangeTo<usize>)
         -> Result<Region<'a>, RawAccessToHardwareError<Region<'a>>>
     {
         self.region(0..range.end)
     }
+}
 
-    fn region_to_mut<'a>(&'a mut self, range: RangeTo<usize>)
-        -> Result<RegionMut<'a>, RawAccessToHardwareError<RegionMut<'a>>>
+impl<'a, T> MemoryMap for &'a mut T
+    where T: MemoryMap
+{    
+    fn last_hw_read(&self) -> Option<u16> {
+        T::last_hw_read(self)
+    }
+
+    fn last_hw_write(&self) -> Option<(u16, u8)> {
+        T::last_hw_write(self)
+    }
+
+    /// Panics if `loc` is greater than `u16::MAX + 1`
+    fn write(&mut self, loc: u16, val: u8) {
+        T::write(self, loc, val)
+    }
+
+    /// Panics if `loc` is greater than `u16::MAX + 1`.
+    ///
+    /// This function requires `&mut self` because reading can potentially
+    /// have side effects, such as clearing hardware registers, etc.
+    fn read(&mut self, loc: u16) -> u8 {
+        T::read(self, loc)
+    }
+}
+
+impl<'a, T> AsMemoryRegion for &'a T
+    where T: AsMemoryRegion
+{
+    fn len(&self) -> usize {
+        T::len(self)
+    }
+
+    fn region<'b>(&'b self, range: Range<usize>) 
+        -> Result<Region<'b>, RawAccessToHardwareError<Region<'b>>> 
     {
-        self.region_mut(0..range.end)
+        T::region(self, range)
+    }
+}
+
+impl<'a, T> AsMemoryRegion for &'a mut T
+    where T: AsMemoryRegion
+{
+    fn len(&self) -> usize {
+        T::len(self)
+    }
+
+    fn region<'b>(&'b self, range: Range<usize>) 
+        -> Result<Region<'b>, RawAccessToHardwareError<Region<'b>>> 
+    {
+        T::region(self, range)
+    }
+}
+
+impl<'a, T> AsMemoryRegionMut for &'a mut T
+    where T: AsMemoryRegionMut
+{
+    fn region_mut<'b>(&'b mut self, range: Range<usize>) 
+        -> Result<RegionMut<'b>, RawAccessToHardwareError<RegionMut<'b>>> 
+    {
+        T::region_mut(self, range)
     }
 }
 
@@ -109,14 +174,13 @@ impl MemoryMap for Map {
     /// Panics if `loc` is greater than `u16::MAX + 1`
     fn write(&mut self, loc: u16, val: u8) {
         self.bytes[loc as usize] = val;
-        if self.hw_ranges.iter()
-                         .any(|r| value_within_range(loc as usize, &r))
-        {
-            self.last_hw_write = Some((loc, val));
-        }
-        else {
-            self.last_hw_write = None
-        }
+        self.last_hw_write = 
+            self.hw_ranges.iter()
+                          .find(|r| value_within_range(loc as usize, r))
+                          .map(|_| {
+                              eprintln!("HW Write {:02x} -> {:04x}", val, loc);
+                              (loc, val)
+                          });
     }
 
     /// Panics if `loc` is greater than `u16::MAX + 1`.
@@ -125,15 +189,13 @@ impl MemoryMap for Map {
     /// have side effects, such as clearing hardware registers, etc.
     fn read(&mut self, loc: u16) -> u8 {
         let val = self.bytes[loc as usize];
-        if self.hw_ranges.iter()
-                         .any(|r| value_within_range(loc as usize, &r))
-        {
-            self.last_hw_read = Some(loc);
-        }
-        else {
-            self.last_hw_read = None
-        }
-
+        self.last_hw_read = 
+            self.hw_ranges.iter()
+                          .find(|r| value_within_range(loc as usize, r))
+                          .map(|_| {
+                              eprintln!("HW Read {:02x} <- {:04x}", val, loc);
+                              loc
+                          });
         val
     }
 
@@ -142,25 +204,6 @@ impl MemoryMap for Map {
 impl AsMemoryRegion for Map {
     fn len(&self) -> usize {
         self.bytes.len()
-    }
-
-    /// Allows raw, immutable access to the underlying memory region. 
-    ///
-    /// The function will return a `RawAccessToHardwareError(Region(..))` if the 
-    /// requested region overlaps a hardware memory mapped region. However,
-    /// The error response still contains the requested region. This serves
-    /// to indicate to the caller that they're potentially accessing a 
-    /// region of memory that would otherwise generate side effects
-    fn region_mut<'a>(&'a mut self, range: Range<usize>) 
-        -> Result<RegionMut<'a>, RawAccessToHardwareError<RegionMut<'a>>>
-    {
-        if self.hw_ranges.iter().any(|r| ranges_overlap(r.clone(), &range)) {
-            Err(RawAccessToHardwareError(RegionMut(&mut self.bytes[range])))
-        }
-        else {
-            Ok(RegionMut(&mut self.bytes[range]))
-        }
-
     }
 
     /// Allows raw, mutable access to the underlying memory region. 
@@ -180,6 +223,28 @@ impl AsMemoryRegion for Map {
             Ok(Region(&self.bytes[range]))
         }
     }
+}
+
+impl AsMemoryRegionMut for Map {
+    /// Allows raw, immutable access to the underlying memory region. 
+    ///
+    /// The function will return a `RawAccessToHardwareError(Region(..))` if the 
+    /// requested region overlaps a hardware memory mapped region. However,
+    /// The error response still contains the requested region. This serves
+    /// to indicate to the caller that they're potentially accessing a 
+    /// region of memory that would otherwise generate side effects
+    fn region_mut<'a>(&'a mut self, range: Range<usize>) 
+        -> Result<RegionMut<'a>, RawAccessToHardwareError<RegionMut<'a>>>
+    {
+        if self.hw_ranges.iter().any(|r| ranges_overlap(r.clone(), &range)) {
+            Err(RawAccessToHardwareError(RegionMut(&mut self.bytes[range])))
+        }
+        else {
+            Ok(RegionMut(&mut self.bytes[range]))
+        }
+
+    }
+
 }
 
 #[cfg(test)]
