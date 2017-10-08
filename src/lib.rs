@@ -20,9 +20,21 @@ macro_rules! log_mem {
     };
 }
 
+macro_rules! log_video {
+    ($fmt:expr, $($params:expr),+) => {
+        #[cfg(feature="video-logging")]
+        eprintln!($fmt, $($params),*);
+    };
+    ($fmt:expr) => {
+        #[cfg(feature="video-logging")]
+        eprintln!($fmt);
+    };
+}
+
 pub mod cpu;
 pub mod timer;
 pub mod emulator;
 pub mod debugger;
 pub mod memory;
+pub mod video;
 

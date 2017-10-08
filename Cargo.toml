@@ -15,4 +15,5 @@ minifb = "*"
 [features]
 cpu-logging = []
 memory-logging = []
+video-logging = []
 

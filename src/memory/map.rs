@@ -38,6 +38,7 @@ pub trait MemoryMap {
     fn last_hw_write(&self) -> Option<(u16, u8)>;
     fn write(&mut self, loc: u16, val: u8);
     fn read(&mut self, loc: u16) -> u8;
+    fn clear_last_hw_access(&mut self);
 }
 
 pub trait AsMemoryRegionMut : AsMemoryRegion {
@@ -100,6 +101,10 @@ impl<'a, T> MemoryMap for &'a mut T
     /// have side effects, such as clearing hardware registers, etc.
     fn read(&mut self, loc: u16) -> u8 {
         T::read(self, loc)
+    }
+
+    fn clear_last_hw_access(&mut self) {
+        T::clear_last_hw_access(self);
     }
 }
 
@@ -237,6 +242,11 @@ impl MemoryMap for Map {
                               None
                           });
         val
+    }
+
+    fn clear_last_hw_access(&mut self) {
+        self.last_hw_read = None;
+        self.last_hw_write = None;
     }
 
 }

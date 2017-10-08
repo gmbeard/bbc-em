@@ -21,8 +21,8 @@ use bbc_em::debugger::{
     FrontEndError,
 };
 use bbc_em::memory::Map;
-
 use bbc_em::debugger::Error;
+use bbc_em::video::FrameBuffer;
 
 const CYCLES_PER_SECOND: usize = 2_000_000;
 const SPEED_DIVISOR: usize = 1;
@@ -150,13 +150,14 @@ fn run_emulator<E>(mut emu: E, args: &[String]) -> Result<(), ApplicationError>
                                  480,
                                  WindowOptions::default()).unwrap();
 
+    let mut fb = FrameBuffer::new(640, 480);
     let mut total_cycles: u64 = 0;
     while window.is_open() && !window.is_key_down(Key::Escape) {
 //    loop {
         let start = Instant::now();
 
         while frame_cycles < CYCLES_PER_FRAME {
-            match emu.step()? {
+            match emu.step(&mut fb)? {
                 StepResult::Progressed(cycles) => {
                     frame_cycles += cycles;
                 },
@@ -167,8 +168,8 @@ fn run_emulator<E>(mut emu: E, args: &[String]) -> Result<(), ApplicationError>
 
         total_cycles += frame_cycles as u64;
 
-        update_buffer(&mut buf, 640, 480, total_cycles);
-        window.update_with_buffer(&buf).unwrap();
+//        update_buffer(&mut buf, 640, 480, total_cycles);
+        window.update_with_buffer(&fb).unwrap();
 
         frame_cycles -= cmp::min(CYCLES_PER_FRAME, frame_cycles);
 
