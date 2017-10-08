@@ -562,13 +562,19 @@ fn write_mem<M: MemoryMap>(val: u8,
         ZeroPage(ref loc) => mem.write(*loc as _, val),
         ZeroPageX(ref loc) => mem.write(loc.wrapping_add(reg.x) as _, val),
         IndirectX(ref loc) => {
-            let target = mem.read(*loc as _) as u16;
-            mem.write(target.wrapping_add(reg.x as u16) as _, val);
+            let loc = *loc as u16 + reg.x as u16;
+            let target = mem.read(loc) as u16 | (mem.read(loc + 1) as u16) << 8;
+//            let target_lo = mem.read(loc as _) as u16;
+//            let target_hi = mem.read(loc as u16 + 1) as u16;
+//            let target = target_lo as u16 | (target_hi as u16) << 8;
+            mem.write(target as _, val);
         },
         IndirectY(ref loc) => {
-            let loc = *loc as u16 + reg.y as u16;
-            let target = mem.read(loc as _);
-            mem.write(target as _, val);
+            let target = mem.read(*loc as _) as u16 | (mem.read(*loc as u16 + 1) as u16) << 8;
+//            let target_lo = mem.read(*loc as _);
+//            let target_hi = mem.read(*loc as u16 + 1);
+//            let target = target_lo as u16 | (target_hi as u16) << 8;
+            mem.write(target.wrapping_add(reg.y as u16) as _, val);
         },
         _ => unreachable!()
     }
@@ -593,17 +599,23 @@ fn read_mem<M: MemoryMap>(addr: &Addressing,
         AbsoluteX(ref loc) => Ok((mem.read(*loc + reg.x as u16), page_crossed(reg.pc, *loc + reg.x as u16))),
         AbsoluteY(ref loc) => Ok((mem.read(*loc + reg.y as u16), page_crossed(reg.pc, *loc + reg.y as u16))),
         Indirect(ref loc) => {
-            let target = (mem.read(*loc) as u16) << 8 | mem.read(*loc + 1) as u16;
+            let target = mem.read(*loc as _) as u16 | (mem.read(*loc as u16 + 1) as u16) << 8;
             Ok((mem.read(target), false))
         },
         IndirectX(ref loc) => {
-            let target = mem.read(*loc as _) as u16;
-            Ok((mem.read(target.wrapping_add(reg.x as u16)), false))
+            let loc = *loc as u16 + reg.x as u16;
+            let target = mem.read(loc) as u16 | (mem.read(loc + 1) as u16) << 8;
+//            let target_lo = mem.read(loc as _) as u16;
+//            let target_hi = mem.read(loc as u16 + 1) as u16;
+//            let target = target_lo as u16 | (target_hi as u16) << 8;
+            Ok((mem.read(target as _), false))
         },
         IndirectY(ref loc) => {
-            let loc = *loc as u16 + reg.y as u16;
-            let target = mem.read(loc as _);
-            Ok((mem.read(target as _), page_crossed(reg.pc, loc)))
+            let target = mem.read(*loc as _) as u16 | (mem.read(*loc as u16 + 1) as u16) << 8;
+//            let target_lo = mem.read(*loc as _);
+//            let target_hi = mem.read(*loc as u16 + 1);
+//            let target = target_lo as u16 | (target_hi as u16) << 8;
+            Ok((mem.read(target.wrapping_add(reg.y as u16)), page_crossed(reg.pc, target.wrapping_add(reg.y as u16))))
         },
         ZeroPage(ref loc) => Ok((mem.read(*loc as _), false)),
         ZeroPageX(ref loc) => Ok((mem.read(loc.wrapping_add(reg.x) as _), false)),
@@ -948,7 +960,7 @@ fn execute_instruction<M: MemoryMap>(ins: Instruction,
             reg.status.carry = 0x01 == (0x01 & val);
             val = val >> 1;
             reg.status.zero = val == 0;
-            reg.status.negative = false;
+            reg.status.negative = 0x80 == (0x80 & val);
             write_mem(val, &ins.1, mem, reg)?;
 
             Ok(ins.2)
@@ -1136,11 +1148,15 @@ impl Cpu {
             decode_instruction(&instruction_region).unwrap()
         };
 
+
+        log_cpu!("{:04x}: {}", self.registers.pc, ins);
         self.registers.pc += bytes as u16;
-        execute_instruction(ins, &mut mem, &mut self.registers)
+        let result = execute_instruction(ins, &mut mem, &mut self.registers);
+        result
     }
 
     pub fn non_maskable_interrupt<M: MemoryMap>(&mut self, mut mem: M) -> Result<(), CpuError> {
+        log_cpu!("NMI");
         push_cpu_state(self, &mut mem)?;
         let low = mem.read(0xfffa);
         let hi = mem.read(0xfffb);
@@ -1153,6 +1169,7 @@ impl Cpu {
     {
         if !self.registers.status.interrupt {
 
+            log_cpu!("IRQ");
             mem.write(0xfe4d, 0xe0);
             mem.write(0xfe4e, 0xe0);
 

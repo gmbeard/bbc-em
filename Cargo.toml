@@ -12,3 +12,7 @@ kernel32-sys = "*"
 winapi = "*"
 minifb = "*"
 
+[features]
+cpu-logging = []
+memory-logging = []
+

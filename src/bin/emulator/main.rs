@@ -9,6 +9,7 @@ use std::io;
 use std::time::{Duration, Instant};
 use std::thread;
 use std::cmp;
+use std::path::Path;
 
 use minifb::{Window, WindowOptions, Key};
 
@@ -111,6 +112,19 @@ fn update_buffer(buf: &mut [u32], cols: usize, rows: usize, cycles: u64) {
 //    }
 }
 
+fn load_rom_file<P: AsRef<Path>>(path: P) -> io::Result<Vec<u8>> {
+    fs::File::open(path)?.bytes().collect::<io::Result<Vec<_>>>()
+}
+
+fn build_memory(args: &[String]) -> io::Result<Map> {
+    let mut map = Map::new().with_hw_range(0xfe00..0xff00);
+    for f in &args[2..] {
+        map.add_paged_rom(load_rom_file(f)?);
+    }
+
+    Ok(map)
+}
+
 fn run_emulator<E>(mut emu: E, args: &[String]) -> Result<(), ApplicationError>
     where E: Emulator,
           ApplicationError: From<E::Error>
@@ -120,13 +134,13 @@ fn run_emulator<E>(mut emu: E, args: &[String]) -> Result<(), ApplicationError>
     let os_rom_file = args.iter().nth(1)
         .ok_or_else(|| ApplicationError::MissingRom("No OS ROM file specified!"))?;
 
-    let lang_rom_file = args.iter().nth(2)
-        .ok_or_else(|| ApplicationError::MissingRom("No Language ROM file specified!"))?;
+//    let lang_rom_file = args.iter().nth(2)
+//        .ok_or_else(|| ApplicationError::MissingRom("No Language ROM file specified!"))?;
 
     let os_rom = fs::File::open(os_rom_file)?.bytes().collect::<io::Result<Vec<_>>>()?;
-    let lang_rom = fs::File::open(lang_rom_file)?.bytes().collect::<io::Result<Vec<_>>>()?;
+//    let lang_rom = fs::File::open(lang_rom_file)?.bytes().collect::<io::Result<Vec<_>>>()?;
 
-    emu.place_rom_at(0x8000, lang_rom.as_slice());
+//    emu.place_rom_at(0x8000, lang_rom.as_slice());
     emu.place_rom_at(0xc000, os_rom.as_slice());
     emu.initialize()?;
 
@@ -187,14 +201,12 @@ fn main() {
     match (debug, attach) {
         (true, false) => FrontEnd::with_args(&args).run().unwrap(),
         (false, true) => {
-            let map = Map::new().with_hw_range(0xfe00..0xff00)
-                                .with_hw_range(0x8000..0xc000);
-            run_emulator(Backend::new(BbcEmulator::with_memory(map)), &args).unwrap();
+            let emu = BbcEmulator::with_memory(build_memory(&args).unwrap());
+            run_emulator(Backend::new(emu), &args).unwrap();
         }
         (false, false) => {
-            let map = Map::new().with_hw_range(0xfe00..0xff00)
-                                .with_hw_range(0x8000..0xc000);
-            run_emulator(BbcEmulator::with_memory(map), &args).unwrap();
+            let emu = BbcEmulator::with_memory(build_memory(&args).unwrap());
+            run_emulator(emu, &args).unwrap();
         }
         _ => {
             eprintln!("--debug and --attach flags cannot be used together");

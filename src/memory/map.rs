@@ -1,5 +1,6 @@
 use std::u16;
 use std::ops::{Range, RangeFrom, RangeTo};
+use std::io;
 
 use memory::region::{Region, RegionMut};
 
@@ -9,7 +10,9 @@ pub struct Map {
     bytes: Vec<u8>,
     last_hw_write: Option<(u16, u8)>,
     last_hw_read: Option<u16>,
-    hw_ranges: Vec<Range<usize>>
+    hw_ranges: Vec<Range<usize>>,
+    paged_roms: Vec<Vec<u8>>,
+    current_paged_rom: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -138,14 +141,23 @@ impl<'a, T> AsMemoryRegionMut for &'a mut T
     }
 }
 
+const PAGED_ROM_REGISTER: u16 = 0xfe30;
+const PAGED_ROM_MEMORY_RANGE: Range<usize> = 0x8000..0xc000;
+
 impl Map {
     pub fn new() -> Map {
         Map {
             bytes: vec![0; MEM_SIZE],
             last_hw_write: None,
             last_hw_read: None,
-            hw_ranges: vec![]
+            hw_ranges: vec![],
+            paged_roms: vec![],
+            current_paged_rom: None,
         }
+    }
+
+    pub fn add_paged_rom(&mut self, rom: Vec<u8>) {
+        self.paged_roms.push(rom)
     }
 
     pub fn with_hw_range(mut self, range: Range<usize>) -> Map
@@ -160,6 +172,22 @@ impl Map {
         self.hw_ranges.extend(ranges.into_iter().collect::<Vec<_>>());
         self
     }
+
+    fn switch_paged_rom_to(&mut self, num: usize) {
+        if let None =  self.paged_roms.get(num) {
+            return;
+        }
+
+        self.current_paged_rom.map(|n|{
+            io::copy(
+                &mut &self.bytes[PAGED_ROM_MEMORY_RANGE], 
+                &mut &mut self.paged_roms[n][..]).unwrap();
+        });
+
+        io::copy(
+            &mut &self.paged_roms[num][..], 
+            &mut &mut self.bytes[PAGED_ROM_MEMORY_RANGE]).unwrap();
+    }
 }
 
 impl MemoryMap for Map {
@@ -173,14 +201,22 @@ impl MemoryMap for Map {
 
     /// Panics if `loc` is greater than `u16::MAX + 1`
     fn write(&mut self, loc: u16, val: u8) {
+        if loc == PAGED_ROM_REGISTER {
+            self.switch_paged_rom_to(val as usize);
+        }
         self.bytes[loc as usize] = val;
         self.last_hw_write = 
             self.hw_ranges.iter()
                           .find(|r| value_within_range(loc as usize, r))
                           .map(|_| {
-                              eprintln!("HW Write {:02x} -> {:04x}", val, loc);
+                              log_mem!("HW Write {:02x} -> {:04x}", val, loc);
                               (loc, val)
+                          })
+                          .or_else(|| {
+                              log_mem!("RAM Write {:02x} -> {:04x}", val, loc);
+                              None
                           });
+                               
     }
 
     /// Panics if `loc` is greater than `u16::MAX + 1`.
@@ -193,8 +229,12 @@ impl MemoryMap for Map {
             self.hw_ranges.iter()
                           .find(|r| value_within_range(loc as usize, r))
                           .map(|_| {
-                              eprintln!("HW Read {:02x} <- {:04x}", val, loc);
+                              log_mem!("HW Read {:02x} <- {:04x}", val, loc);
                               loc
+                          })
+                          .or_else(|| {
+                              log_mem!("RAM Read {:02x} <- {:04x}", val, loc);
+                              None
                           });
         val
     }

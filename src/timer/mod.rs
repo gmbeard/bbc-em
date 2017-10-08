@@ -1,6 +1,6 @@
 const CYCLES_PER_SECOND: usize = 2_000_000;
 const CYCLES_PER_MS: usize = CYCLES_PER_SECOND / 1000;
-const TIMER_INTERVAL_IN_MS: usize = 10;
+const TIMER_INTERVAL_IN_MS: usize = 20;
 const CYCLES_PER_INTERVAL: usize = CYCLES_PER_MS * TIMER_INTERVAL_IN_MS;
 
 pub struct Timer {
