@@ -10,7 +10,11 @@ pub struct Crtc6845 {
     vertical_count: usize,
     scanline_count: usize,
     fb_offset: usize,
+    video_addr: usize,
+    video_line_addr: usize,
 }
+
+const OUTPUT_SCALE: usize = 2;
 
 impl Crtc6845 {
     pub fn new() -> Crtc6845 {
@@ -21,17 +25,23 @@ impl Crtc6845 {
             vertical_count: 0,
             scanline_count: 0,
             fb_offset: 0,
+            video_addr: 0,
+            video_line_addr: 0,
         }
     }
 
     fn write_char_to_fb(&mut self, val: u8, fb: &mut [u32]) {
-        for i in 0..8 {
-            let v = val.wrapping_shr(7-i);
-            if 0x01 == (v & 0x01) {
-                fb[self.fb_offset + i as usize] = 0xffffffff;
-            }
-            else {
-                fb[self.fb_offset + i as usize] = 0x00000000;
+        for y in 0..OUTPUT_SCALE {
+            for x in 0..OUTPUT_SCALE {
+                for i in 0..8_usize {
+                    let v = val.wrapping_shr(7-i as u32);
+                    if 0x01 == (v & 0x01) {
+                        fb[(640 * y) + self.fb_offset + i + x] = 0xffffffff;
+                    }
+                    else {
+                        fb[(640 * y) + self.fb_offset + i + x] = 0x00000000;
+                    }
+                }
             }
         }
     }
@@ -56,43 +66,36 @@ impl Crtc6845 {
 
         //  Horiz. and vert. count = 0
         for _ in 0..cycles {
-            let screen_char = video_mem.as_ref()[self.horizontal_count * (self.vertical_count + self.scanline_count)]; 
+            let screen_char = video_mem.as_ref()[self.video_addr]; 
             self.write_char_to_fb(
                 screen_char, 
                 fb
             );
 
             self.horizontal_count += 1;
+            self.video_addr += 8;
             self.fb_offset += 8;
             
-            if self.horizontal_count >= self.registers[1] as _ {
+            if self.horizontal_count >= (self.registers[1] as usize + 1) {
                 self.horizontal_count = 0;
                 self.scanline_count += 1;
-                self.fb_offset = fb.width * (self.scanline_count + self.vertical_count);
-                if self.scanline_count >= self.registers[5] as _ {
+                self.video_line_addr += 1;
+                self.video_addr = self.video_line_addr;
+                self.fb_offset = fb.width * OUTPUT_SCALE * (self.scanline_count + self.vertical_count);
+
+                if self.scanline_count >= (self.registers[5] as usize + 1) {
+                    self.video_line_addr = self.video_addr;
                     self.scanline_count = 0;
                     self.vertical_count += 1;
 
-                    if self.vertical_count >= self.registers[4] as _ {
+                    if self.vertical_count >= (self.registers[4] as usize + 1) {
+                        self.video_line_addr = 0;
+                        self.video_addr = 0;
                         self.vertical_count = 0;
                         self.fb_offset = 0;
                     }
                 }
             }
-
-            //  if horiz. count == horiz. sync pos. (R2); H-Sync
-            //  if horiz. count outside the displayed char range; disable horiz. display
-            //  if horiz. and vert. display enabled;
-            //      Read a byte (char's current line) from video mem line 
-            //      Write to framebuffer
-            //  otherwise;
-            //      Render blank
-            //  if horiz. count == total horiz. count (R0);
-            //      if scanline count == total scanlines per char (R5);
-            //          new screen row
-            //          scanline count = 0
-            //  Bump horizontal count
-
         }
     }
 }
