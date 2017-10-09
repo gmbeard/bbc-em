@@ -151,6 +151,9 @@ fn run_emulator<E>(mut emu: E, args: &[String]) -> Result<(), ApplicationError>
                                  WindowOptions::default()).unwrap();
 
     let mut fb = FrameBuffer::new(640, 480);
+    for b in fb.as_mut() {
+        *b = 0xff606060;
+    }
     let mut total_cycles: u64 = 0;
     while window.is_open() && !window.is_key_down(Key::Escape) {
 //    loop {
