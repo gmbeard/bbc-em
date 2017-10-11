@@ -2,6 +2,7 @@ use cpu::*;
 use timer::*;
 use memory::*;
 use video::*;
+use via;
 
 #[derive(Debug)]
 pub enum StepResult {
@@ -23,9 +24,9 @@ pub trait Emulator {
 
 pub struct BbcEmulator<M> {
     cpu: Cpu,
-    timer: Timer,
     mem: M,
     video: Crtc6845,
+    system_via: via::System,
 }
 
 impl<M> BbcEmulator<M> {
@@ -34,9 +35,9 @@ impl<M> BbcEmulator<M> {
 
         BbcEmulator {
             cpu: Cpu::new(),
-            timer: Timer::new(),
             mem: mem,
             video: Crtc6845::new(),
+            system_via: via::System::new(),
         }
     }
 }
@@ -63,10 +64,14 @@ impl<M> Emulator for BbcEmulator<M>
     }
 
     fn step(&mut self, fb: &mut FrameBuffer) -> Result<StepResult, CpuError> {
+        let mut irq = false;
+
         let cycles = self.cpu.step(&mut self.mem)?;
+        self.system_via.step(cycles, &mut self.mem, || { irq = true });
         self.video.step(cycles, &mut self.mem, fb);
-        if self.timer.step(cycles) {
-            self.cpu.interrupt_request(&mut self.mem)?;
+
+        if irq {
+            self.cpu.interrupt_request(&mut self.mem);
         }
 
         self.mem.clear_last_hw_access();

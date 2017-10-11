@@ -1170,8 +1170,8 @@ impl Cpu {
         if !self.registers.status.interrupt {
 
             log_cpu!("IRQ");
-            mem.write(0xfe4d, 0xe0);
-            mem.write(0xfe4e, 0xe0);
+//            mem.write(0xfe4d, 0xe0);
+//            mem.write(0xfe4e, 0xe0);
 
             push_cpu_state(self, &mut mem)?;
             let low = mem.read(0xfffe);
@@ -1213,10 +1213,11 @@ mod decode_should {
 #[cfg(test)]
 mod execute_should {
     use super::*;
+    use memory::Map;
 
     #[test]
     fn add_to_accumulator_with_correct_overflow() {
-        let mut mem = Vec::new();
+        let mut mem = Map::new();
         let mut reg = Registers::new();
         reg.acc = 0x7f; 
 

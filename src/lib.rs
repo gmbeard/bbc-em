@@ -37,4 +37,5 @@ pub mod emulator;
 pub mod debugger;
 pub mod memory;
 pub mod video;
+pub mod via;
 

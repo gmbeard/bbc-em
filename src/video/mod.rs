@@ -72,15 +72,17 @@ impl Crtc6845 {
             let pos = (self.scanline_count + (self.horizontal_count * 8)) 
                 + (displayed_line_chars * self.vertical_count * (scan_lines_per_char + 1));
 
-            if self.horizontal_count == 0 && self.scanline_count == 0 && self.vertical_count == 1 {
-                assert_eq!(screen_start + 0x0140, ((pos & 0xffff) as u16) + screen_start);
-            }
+//            if self.horizontal_count == 0 && self.scanline_count == 0 && self.vertical_count == 1 {
+//                assert_eq!(screen_start + 0x0140, ((pos & 0xffff) as u16) + screen_start);
+//            }
 
-            let screen_char = video_mem.as_ref()[pos]; 
-            self.write_char_to_fb(
-                screen_char, 
-                fb
-            );
+            if pos < video_mem.as_ref().len() {
+                let screen_char = video_mem.as_ref()[pos]; 
+                self.write_char_to_fb(
+                    screen_char, 
+                    fb
+                );
+            }
 
             self.horizontal_count += 1;
             self.fb_offset += 8;
