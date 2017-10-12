@@ -1,0 +1,6 @@
+[package]
+name = "glyphs"
+version = "0.1.0"
+authors = ["Greg Beard <greg.beard@vodafone.com>"]
+
+[dependencies]

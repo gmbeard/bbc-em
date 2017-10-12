@@ -11,6 +11,7 @@ path = "src/lib.rs"
 kernel32-sys = "*"
 winapi = "*"
 minifb = "*"
+glyphs = { path = "glyphs" }
 
 [features]
 cpu-logging = []
