@@ -2,6 +2,7 @@
 name = "bbc_em"
 version = "0.1.0"
 dependencies = [
+ "glyphs 0.1.0",
  "kernel32-sys 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "minifb 0.10.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "winapi 0.2.8 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -37,6 +38,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "winapi 0.2.8 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
+
+[[package]]
+name = "glyphs"
+version = "0.1.0"
 
 [[package]]
 name = "kernel32-sys"
