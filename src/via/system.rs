@@ -126,11 +126,8 @@ impl System {
             mem.last_hw_write(),
             key_eval);
 
-        let mut irq = false;
-
         if self.timer_count >= TIMER_FREQ {
             self.registers.interrupts.signal_one(InterruptType::Timer1);
-            self.registers.interrupts.signal_one(InterruptType::VerticalSync);
             self.timer_count -= TIMER_FREQ;
         }
 
@@ -160,6 +157,10 @@ impl System {
 
     pub fn keydown(&mut self, keynum: u32) {
         self.registers.key_down(keynum);
+    }
+
+    pub fn clear_keyboard_buffer(&mut self) {
+        self.registers.clear_keyboard_buffer();
     }
 
     pub fn keyup(&mut self, keynum: u32) {

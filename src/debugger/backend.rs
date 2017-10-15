@@ -188,5 +188,13 @@ impl<T> Emulator for Backend<T>
     fn mem(&self) -> &Self::Memory {
         self.emulator.mem()
     }
+
+    fn keydown(&mut self, keynum: u32) {
+        self.emulator.keydown(keynum);
+    }
+
+    fn clear_keyboard_buffer(&mut self) {
+        self.emulator.clear_keyboard_buffer();
+    }
 }
 

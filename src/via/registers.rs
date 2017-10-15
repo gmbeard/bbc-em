@@ -154,4 +154,8 @@ impl Registers {
             _ => {}
         }
     }
+
+    pub fn clear_keyboard_buffer(&mut self) {
+        self.keyboard_buffer.clear();
+    }
 }

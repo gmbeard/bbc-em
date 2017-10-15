@@ -23,6 +23,7 @@ pub trait Emulator {
     fn mem(&self) -> &Self::Memory;
     fn keydown(&mut self, key: u32) { }
     fn keyup(&mut self, key: u32) { }
+    fn clear_keyboard_buffer(&mut self) { }
 }
 
 pub struct BbcEmulator<M> {
@@ -85,8 +86,8 @@ impl<M> Emulator for BbcEmulator<M>
         self.system_via.keydown(key);
     }
 
-    fn keyup(&mut self, key: u32) {
-        self.system_via.keyup(key);
+    fn clear_keyboard_buffer(&mut self) {
+        self.system_via.clear_keyboard_buffer();
     }
 
     fn cpu(&self) -> &Cpu {

@@ -58,7 +58,10 @@ impl Default for Interrupts {
     fn default() -> Interrupts {
         Interrupts {
             flags: 0x00,
-            enabled: 0x00,
+            enabled: 0xff,  // Booting the OS with any IER bits set
+                            // seems to bypass MODE 7. Weird! Maybe this is
+                            // some hack in case the machine doesn't have
+                            // the Teletext processor installed.
             signalled: 0x00,
         }
     }

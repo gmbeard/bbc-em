@@ -113,6 +113,7 @@ fn run_emulator<E>(mut emu: E, args: &[String]) -> Result<(), ApplicationError>
     let mut emulated_cycles = 0;
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
+        emu.clear_keyboard_buffer();
         window.get_keys().map(|keys| {
             for k in keys {
                 emu.keydown(k as u32);

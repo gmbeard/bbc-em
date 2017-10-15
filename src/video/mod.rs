@@ -71,6 +71,19 @@ impl Crtc6845 {
         }
     }
 
+    fn render_char(&self, byte: u8, fb: &mut FrameBuffer, scanline: usize, x: usize, y: usize) {
+        const SCANLINES_PER_CHAR: usize = 9;
+
+        let bytes = glyphs::expand_byte_to_u32_array(byte);
+        let output_x = x * 8;
+        let output_y = (y * fb.width * (self.registers[SCANLINES_PER_CHAR] as usize + 1)) + 
+            (scanline * fb.width);
+
+        for n in 0..8 {
+            fb[output_y + output_x + n] = bytes[n];
+        }
+    }
+
     fn is_teletext(&self) -> bool {
         bit_is_set!(self.video_control_reg, 1)
     }
@@ -144,7 +157,7 @@ impl Crtc6845 {
 
                         if self.registers[TOTAL_HORIZ_DISP] == 0 ||
                             self.registers[TOTAL_VERT_DISP] == 0
-                            || start_addr != 0x7c00
+                            || start_addr == 0
                         {
                             break;
                         }
@@ -169,30 +182,42 @@ impl Crtc6845 {
 
                         if sl >= (self.registers[SCANLINES_PER_CHAR] as usize + 1) {
                             let next_line_addr = {
-                                //  TODO: Other modes...
-                                line_addr + self.registers[TOTAL_HORIZ_DISP] as u16
+                                if self.is_teletext() {
+                                    line_addr + self.registers[TOTAL_HORIZ_DISP] as u16
+                                }
+                                else {
+                                    line_addr + ((self.registers[TOTAL_HORIZ_DISP] as u16 - 1) * 8)
+                                }
                             };
 
                             self.state = VideoState::EndOfLine(next_line_addr, l + 1);
                             continue;
                         }
 
-                        let video_mem = &*mem.region((line_addr as usize)..0x8000)
-                                             .unwrap_or_else(|e| e.0);
+                        self.state = VideoState::DisplayingLine(line_addr, l, c + 1, sl);
 
+                        if line_addr < 0x8000 {
+                            let video_mem = &*mem.region((line_addr as usize)..0x8000)
+                                                 .unwrap_or_else(|e| e.0);
 
-                        let byte = video_mem[c];
+                            if self.is_teletext() {
+                                let byte = video_mem[c];
 
-                        match byte.checked_sub(0x20) {
-                            Some(v) =>  {
-                                if let Some(glyph) = glyphs::glyph_expand_rows(v as usize) {
-                                    self.render_glyph(glyph, fb, sl, c, l);
+                                match byte.checked_sub(0x20) {
+                                    Some(v) =>  {
+                                        if let Some(glyph) = glyphs::glyph_expand_rows(v as usize) {
+                                            self.render_glyph(glyph, fb, sl, c, l);
+                                        }
+                                    },
+                                    _ => {},
                                 }
-                            },
-                            _ => {},
+                            }
+                            else {
+                                let byte = video_mem[c * 8];
+                                self.render_char(byte, fb, sl, c, l);
+                            }
                         }
 
-                        self.state = VideoState::DisplayingLine(line_addr, l, c + 1, sl);
                         break;
                     },
                     VideoState::EndOfLine(next_line_addr, lines_displayed) => {
