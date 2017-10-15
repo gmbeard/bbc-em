@@ -646,7 +646,7 @@ fn execute_instruction<M: MemoryMap>(ins: Instruction,
             // Overflow?
             reg.status.overflow = 0 != (orig & 0x80) ^ (reg.acc & 0x80);
             // Negative?
-            reg.status.negative = 0 != reg.acc & 0x80;
+            reg.status.negative = bit_is_set!(reg.acc, 7);
 
             Ok(ins.2 + if cross_page { 1 } else { 0 })
         },
@@ -655,7 +655,7 @@ fn execute_instruction<M: MemoryMap>(ins: Instruction,
             reg.acc = val & reg.acc;
 
             reg.status.zero = reg.acc == 0;
-            reg.status.negative = 0 != reg.acc & 0x80;
+            reg.status.negative = bit_is_set!(reg.acc, 7);
 
             Ok(ins.2 + if cross_page { 1 } else { 0 })
         },
@@ -664,7 +664,7 @@ fn execute_instruction<M: MemoryMap>(ins: Instruction,
             let (result, overflow) = val.overflowing_shl(1);
             reg.status.carry = overflow;
             reg.status.zero = result == 0;
-            reg.status.negative = 0 != result & 0x80;
+            reg.status.negative = bit_is_set!(result, 7);
             write_mem(result, &ins.1, mem, reg)?;
 
             Ok(ins.2)
@@ -720,8 +720,8 @@ fn execute_instruction<M: MemoryMap>(ins: Instruction,
         Bit => {
             let (val, _) = read_mem(&ins.1, mem, reg)?;
             reg.status.zero = 0 == val & reg.acc;
-            reg.status.overflow = 0x40 == val & 0x40;
-            reg.status.negative = 0x80 == val & 0x80;
+            reg.status.overflow = bit_is_set!(val, 6);
+            reg.status.negative = bit_is_set!(val, 7);
 
             Ok(ins.2)
         },
@@ -833,25 +833,52 @@ fn execute_instruction<M: MemoryMap>(ins: Instruction,
         },
         Cmp => {
             let (val, cross_page) = read_mem(&ins.1, mem, reg)?;
-            reg.status.carry = reg.acc >= val;
-            reg.status.zero = reg.acc == val;
-            reg.status.negative = 0x80 == (reg.acc & 0x80);
+            match reg.acc.overflowing_sub(val) {
+                (val, true) => {
+                    reg.status.carry = false;
+                    reg.status.zero = false;
+                    reg.status.negative = bit_is_set!(val, 7);
+                },
+                (val, false) => {
+                    reg.status.carry = true;
+                    reg.status.zero = val == 0;
+                    reg.status.negative = false;
+                }
+            }
 
             Ok(ins.2 + if cross_page { 1 } else { 0 })
         },
         Cpx => {
             let (val, _) = read_mem(&ins.1, mem, reg)?;
-            reg.status.carry = reg.x >= val;
-            reg.status.zero = reg.x == val;
-            reg.status.negative = 0x80 == (reg.x & 0x80);
+            match reg.x.overflowing_sub(val) {
+                (val, true) => {
+                    reg.status.carry = false;
+                    reg.status.zero = false;
+                    reg.status.negative = bit_is_set!(val, 7);
+                },
+                (val, false) => {
+                    reg.status.carry = true;
+                    reg.status.zero = val == 0;
+                    reg.status.negative = false;
+                }
+            }
 
             Ok(ins.2)
         },
         Cpy => {
             let (val, _) = read_mem(&ins.1, mem, reg)?;
-            reg.status.carry = reg.y >= val;
-            reg.status.zero = reg.y == val;
-            reg.status.negative = 0x80 == (reg.y & 0x80);
+            match reg.y.overflowing_sub(val) {
+                (val, true) => {
+                    reg.status.carry = false;
+                    reg.status.zero = false;
+                    reg.status.negative = bit_is_set!(val, 7);
+                },
+                (val, false) => {
+                    reg.status.carry = true;
+                    reg.status.zero = val == 0;
+                    reg.status.negative = false;
+                }
+            }
 
             Ok(ins.2)
         },
@@ -860,27 +887,27 @@ fn execute_instruction<M: MemoryMap>(ins: Instruction,
             val = val.wrapping_sub(1); 
             write_mem(val, &ins.1, &mut mem, reg)?;
             reg.status.zero = 0 == val;
-            reg.status.negative = 0x80 == (val & 0x80);
+            reg.status.negative = bit_is_set!(val, 7);
 
             Ok(ins.2)
         },
         Dex => {
             reg.x = reg.x.wrapping_sub(1);
             reg.status.zero = 0 == reg.x;
-            reg.status.negative = 0x80 == (0x80 & reg.x);
+            reg.status.negative = bit_is_set!(reg.x, 7);
             Ok(ins.2)
         },
         Dey => {
             reg.y = reg.y.wrapping_sub(1);
             reg.status.zero = 0 == reg.y;
-            reg.status.negative = 0x80 == (0x80 & reg.y);
+            reg.status.negative = bit_is_set!(reg.y, 7);
             Ok(ins.2)
         },
         Eor => {
             let (val, cross_page) = read_mem(&ins.1, mem, reg)?;
             reg.acc ^= val;
             reg.status.zero = reg.acc == 0;
-            reg.status.negative = 0x80 == (0x80 & reg.acc);
+            reg.status.negative = bit_is_set!(reg.acc, 7);
 
             Ok(ins.2 + if cross_page { 1 } else { 0 })
         },
@@ -889,20 +916,20 @@ fn execute_instruction<M: MemoryMap>(ins: Instruction,
             val = val.wrapping_add(1); 
             write_mem(val, &ins.1, &mut mem, reg)?;
             reg.status.zero = 0 == val;
-            reg.status.negative = 0x80 == (val & 0x80);
+            reg.status.negative = bit_is_set!(val, 7);
 
             Ok(ins.2)
         },
         Inx => {
             reg.x = reg.x.wrapping_add(1);
             reg.status.zero = 0 == reg.x;
-            reg.status.negative = 0x80 == (0x80 & reg.x);
+            reg.status.negative = bit_is_set!(reg.x, 7);
             Ok(ins.2)
         },
         Iny => {
             reg.y = reg.y.wrapping_add(1);
             reg.status.zero = 0 == reg.y;
-            reg.status.negative = 0x80 == (0x80 & reg.y);
+            reg.status.negative = bit_is_set!(reg.y, 7);
             Ok(ins.2)
         },
         Jmp => {
@@ -935,7 +962,7 @@ fn execute_instruction<M: MemoryMap>(ins: Instruction,
             let (val, cross_page) = read_mem(&ins.1, mem, reg)?;
             reg.acc = val;
             reg.status.zero = reg.acc == 0;
-            reg.status.negative = 0x80 == (0x80 & reg.acc);
+            reg.status.negative = bit_is_set!(reg.acc, 7);
 
             Ok(ins.2 + if cross_page { 1 } else { 0 })
         },
@@ -943,7 +970,7 @@ fn execute_instruction<M: MemoryMap>(ins: Instruction,
             let (val, cross_page) = read_mem(&ins.1, mem, reg)?;
             reg.x = val;
             reg.status.zero = reg.x == 0;
-            reg.status.negative = 0x80 == (0x80 & reg.x);
+            reg.status.negative = bit_is_set!(reg.x, 7);
 
             Ok(ins.2 + if cross_page { 1 } else { 0 })
         },
@@ -951,7 +978,7 @@ fn execute_instruction<M: MemoryMap>(ins: Instruction,
             let (val, cross_page) = read_mem(&ins.1, mem, reg)?;
             reg.y = val;
             reg.status.zero = reg.y == 0;
-            reg.status.negative = 0x80 == (0x80 & reg.y);
+            reg.status.negative = bit_is_set!(reg.y, 7);
 
             Ok(ins.2 + if cross_page { 1 } else { 0 })
         },
@@ -960,7 +987,7 @@ fn execute_instruction<M: MemoryMap>(ins: Instruction,
             reg.status.carry = 0x01 == (0x01 & val);
             val = val >> 1;
             reg.status.zero = val == 0;
-            reg.status.negative = 0x80 == (0x80 & val);
+            reg.status.negative = bit_is_set!(val, 7);
             write_mem(val, &ins.1, mem, reg)?;
 
             Ok(ins.2)
@@ -970,7 +997,7 @@ fn execute_instruction<M: MemoryMap>(ins: Instruction,
             let (val, cross_page) = read_mem(&ins.1, mem, reg)?;
             reg.acc |= val;
             reg.status.zero = reg.acc == 0;
-            reg.status.negative = 0x80 == (0x80 & reg.acc);
+            reg.status.negative = bit_is_set!(reg.acc, 7);
 
             Ok(ins.2 + if cross_page { 1 } else { 0 })
         },
@@ -985,7 +1012,7 @@ fn execute_instruction<M: MemoryMap>(ins: Instruction,
         Pla => {
             reg.acc = pop_stack(mem, reg)?;
             reg.status.zero = reg.acc == 0;
-            reg.status.negative = 0x80 == (0x80 & reg.acc);
+            reg.status.negative = bit_is_set!(reg.acc, 7);
             Ok(ins.2)
         },
         Plp => {
@@ -996,11 +1023,11 @@ fn execute_instruction<M: MemoryMap>(ins: Instruction,
             let (mut val, _) = read_mem(&ins.1, &mut mem, reg)?;
             let old_carry = reg.status.carry as u8;
             reg.status.zero = false;
-            reg.status.carry = 0x80 == (0x80 & val);
+            reg.status.carry = bit_is_set!(val, 7);
             val = (val & 0x7f) << 1;
             val = val | (old_carry & 0x01);
             reg.status.zero = val == 0;
-            reg.status.negative = 0x80 == (0x80 & val);
+            reg.status.negative = bit_is_set!(val, 7);
             write_mem(val, &ins.1, mem, reg)?;
 
             Ok(ins.2)
@@ -1009,10 +1036,10 @@ fn execute_instruction<M: MemoryMap>(ins: Instruction,
             let (mut val, _) = read_mem(&ins.1, &mut mem, reg)?;
             let old_carry = reg.status.carry as u8;
             reg.status.zero = false;
-            reg.status.carry = 0x01 == (0x01 & val);
+            reg.status.carry = bit_is_set!(val, 0);
             val = val >> 1;
             val = val | ((old_carry & 0x01) << 7);
-            reg.status.negative = 0x80 == (0x80 & val);
+            reg.status.negative = bit_is_set!(val, 7);
             reg.status.zero = val == 0;
             write_mem(val, &ins.1, mem, reg)?;
 
@@ -1043,7 +1070,7 @@ fn execute_instruction<M: MemoryMap>(ins: Instruction,
             // Overflow?
             reg.status.overflow = 0 != (orig & 0x80) ^ (reg.acc & 0x80);
             // Negative?
-            reg.status.negative = 0 != reg.acc & 0x80;
+            reg.status.negative = bit_is_set!(reg.acc, 7);
 
             Ok(ins.2 + if cross_page { 1 } else { 0 })
         },
