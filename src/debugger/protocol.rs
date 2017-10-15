@@ -11,6 +11,7 @@ pub enum DebuggerCmd {
     BreakPoint(u16),
     Unknown(u8),
     RequestCpuState,
+    Print(u32),
 }
 
 #[derive(Debug)]
@@ -64,6 +65,13 @@ impl FromDebuggerMessage for DebuggerCmd {
                 DebuggerCmd::BreakPoint(loc)
             },
             0x06 => DebuggerCmd::RequestCpuState,
+            0x07 => {
+                let mut n: u32 = 0;
+                for (i, b) in vec[..4].iter().enumerate() {
+                    n |= (*b as u32) << (8 * i); 
+                }
+                DebuggerCmd::Print(n)
+            }
             _ => DebuggerCmd::Unknown(id),
         };
 
@@ -154,6 +162,18 @@ impl IntoDebuggerMessage for DebuggerCmd {
             DebuggerCmd::RequestCpuState => {
                 writer.write_all(&[0x06, 0x00, 0x00])?;
                 3
+            },
+            DebuggerCmd::Print(ref num) => {
+                writer.write_all(&[
+                    0x07, 
+                    0x04, 
+                    0x00,
+                    (*num as u8),
+                    (*num >> 8) as u8,
+                    (*num >> 16) as u8,
+                    (*num >> 24) as u8,
+                ])?;
+                7
             },
             DebuggerCmd::Unknown(_) => {
                 writer.write_all(&[0xff, 0x00, 0x00])?;

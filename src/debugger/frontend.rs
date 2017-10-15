@@ -173,6 +173,12 @@ fn process_cmd(s: &str) -> Result<DebuggerCmd, MalformedCommandError> {
 
             DebuggerCmd::BreakPoint(*loc as u16)
         }
+        else if s.starts_with("print") || s.starts_with("p ") {
+            let num = s.split(" ").nth(1)
+                .map_or_else(|| Ok(1), |s| s.parse::<u32>())?;
+
+            DebuggerCmd::Print(num)
+        }
         else if s == "cpu" {
             DebuggerCmd::RequestCpuState
         }

@@ -96,12 +96,36 @@ impl<T> Backend<T>
                     },
                     DebuggerCmd::BreakPoint(loc) => { 
                         self.breakpoints.push(loc);
-                        let msg = format!("Breakpoint set to {:4x}", loc);
+                        let msg = format!("Breakpoint set to {:04x}", loc);
                         self.outgoing.send(DebuggerResponse::Message(msg)).ok();
                     },
                     DebuggerCmd::RequestCpuState => {
                         let reg = self.emulator.cpu().registers();
                         self.outgoing.send(DebuggerResponse::CpuState(*reg)).ok();
+                    },
+                    DebuggerCmd::Print(mut num) => {
+                        let pc = self.emulator.cpu().program_counter() as usize;
+                        let mut offset = 0;
+                        self.outgoing.send(DebuggerResponse::StreamStart).ok();
+                        while num > 0 {
+                            let mem = self.mem().region_from(pc + offset..)
+                                                .unwrap_or_else(|e| e.0);
+                            offset += match cpu::decode_instruction(&mem) {
+                                Ok((bytes, ins)) => {
+                                    let msg = format!("{:04x}: {}", pc + offset, ins);
+                                    self.outgoing.send(DebuggerResponse::Message(msg)).ok();
+                                    bytes
+                                },
+                                Err(_) => {
+                                    let msg = format!("{:04x}: ...", pc + offset);
+                                    self.outgoing.send(DebuggerResponse::Message(msg)).ok();
+                                    1
+                                }
+                            };
+
+                            num -=1;
+                        }
+                        self.outgoing.send(DebuggerResponse::StreamEnd).ok();
                     },
                     _ => {}
                 }
