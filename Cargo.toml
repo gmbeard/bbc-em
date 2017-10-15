@@ -12,9 +12,12 @@ kernel32-sys = "*"
 winapi = "*"
 minifb = "*"
 glyphs = { path = "glyphs" }
+log = "*"
+env_logger = "*"
 
 [features]
 cpu-logging = []
 memory-logging = []
 video-logging = []
+via-logging = []
 

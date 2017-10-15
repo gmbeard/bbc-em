@@ -17,9 +17,12 @@ pub trait Emulator {
 
     fn place_rom_at(&mut self, location: u16, rom: &[u8]);
     fn initialize(&mut self) -> Result<(), Self::Error>;
-    fn step(&mut self, fb: &mut FrameBuffer) -> Result<StepResult, Self::Error>;
+    fn step<K>(&mut self, fb: &mut FrameBuffer, key_eval: K) -> Result<StepResult, Self::Error>
+        where K: Fn(u8) -> bool;
     fn cpu(&self) -> &Cpu;
     fn mem(&self) -> &Self::Memory;
+    fn keydown(&mut self, key: u32) { }
+    fn keyup(&mut self, key: u32) { }
 }
 
 pub struct BbcEmulator<M> {
@@ -63,11 +66,11 @@ impl<M> Emulator for BbcEmulator<M>
         self.cpu.initialize(&mut self.mem)
     }
 
-    fn step(&mut self, fb: &mut FrameBuffer) -> Result<StepResult, CpuError> {
+    fn step<K: Fn(u8) -> bool>(&mut self, fb: &mut FrameBuffer, key_eval: K) -> Result<StepResult, CpuError> {
         let mut irq = false;
 
         let cycles = self.cpu.step(&mut self.mem)?;
-        self.system_via.step(cycles, &mut self.mem, || { irq = true });
+        self.system_via.step(cycles, &mut self.mem, || { irq = true }, key_eval);
         self.video.step(cycles, &mut self.mem, fb);
 
         if irq {
@@ -76,6 +79,14 @@ impl<M> Emulator for BbcEmulator<M>
 
         self.mem.clear_last_hw_access();
         Ok(StepResult::Progressed(cycles))
+    }
+
+    fn keydown(&mut self, key: u32) {
+        self.system_via.keydown(key);
+    }
+
+    fn keyup(&mut self, key: u32) {
+        self.system_via.keyup(key);
     }
 
     fn cpu(&self) -> &Cpu {

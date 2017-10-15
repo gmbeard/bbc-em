@@ -141,7 +141,7 @@ impl<T> Emulator for Backend<T>
         Ok(self.send_current_instruction()?)
     }
 
-    fn step(&mut self, fb: &mut FrameBuffer) -> Result<StepResult, Self::Error> {
+    fn step<K: Fn(u8) -> bool>(&mut self, fb: &mut FrameBuffer, key_eval: K) -> Result<StepResult, Self::Error> {
 
         if self.process_debugger_queue().is_none() {
             return Ok(StepResult::Exit);
@@ -158,7 +158,7 @@ impl<T> Emulator for Backend<T>
                     return Ok(StepResult::Paused);
                 }
                 else {
-                    let result = self.emulator.step(fb)?;
+                    let result = self.emulator.step(fb, key_eval)?;
                     self.send_current_instruction()?;
                     self.state = DebuggerState::Step(num - 1);
                     return Ok(result);
@@ -171,7 +171,7 @@ impl<T> Emulator for Backend<T>
             },
         }
 
-        let result = self.emulator.step(fb)?;
+        let result = self.emulator.step(fb, key_eval)?;
         if let Some(bp) = self.breakpoints.iter().find(|i| **i == self.cpu().program_counter()) {
             self.active_breakpoint = Some(*bp);
             self.state = DebuggerState::Stop;

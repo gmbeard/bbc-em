@@ -1177,6 +1177,7 @@ impl Cpu {
             let low = mem.read(0xfffe);
             let hi = mem.read(0xffff);
             self.registers.pc = ((hi as u16) << 8) | low as u16;
+            self.registers.status.interrupt = true;
             return Ok(true);
         }
 
