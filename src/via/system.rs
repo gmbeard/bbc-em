@@ -11,7 +11,6 @@ const TIMER_FREQ: u64 = CYCLES_PER_MS as u64 * 200;
 pub struct System {
     cycles_elapsed: u64,
     timer_count: u64,
-    kb_write: bool,
     registers: Registers
 }
 
@@ -30,7 +29,6 @@ impl System {
         System {
             cycles_elapsed: 0,
             timer_count: 0,
-            kb_write: true,
             registers: Registers::new(),
         }
     }
@@ -54,13 +52,13 @@ impl System {
         match write {
             Some((PB_IO_REG, val)) => {
                 match val & 0x07 {
-                    0 => log_via!("Set sound write enable to {:02x}", val & 0x08),
-                    1 => log_via!("Set speech read select to {:02x}", val & 0x08),
-                    2 => log_via!("Set speech write select to {:02x}", val & 0x08),
-                    3 => {
-                        log_via!("Set keyboard write enable to {:02x}", val & 0x08);
-                        self.kb_write = (0x08 == (val & 0x08));
-                    }
+//                    0 => log_via!("Set sound write enable to {:02x}", val & 0x08),
+//                    1 => log_via!("Set speech read select to {:02x}", val & 0x08),
+//                    2 => log_via!("Set speech write select to {:02x}", val & 0x08),
+//                    3 => {
+//                        log_via!("Set keyboard write enable to {:02x}", val & 0x08);
+//                        self.kb_write = (0x08 == (val & 0x08));
+//                    }
                     4 => log_via!("Set HW scrolling Low bit to {:02x}", val & 0x08),
                     5 => log_via!("Set HW scrolling High bit to {:02x}", val & 0x08),
                     6 => log_via!("Set CAPS lock LED to {:02x}", val & 0x08),
@@ -128,6 +126,7 @@ impl System {
 
         if self.timer_count >= TIMER_FREQ {
             self.registers.interrupts.signal_one(InterruptType::Timer1);
+//            self.registers.interrupts.signal_one(InterruptType::VerticalSync);
             self.timer_count -= TIMER_FREQ;
         }
 
