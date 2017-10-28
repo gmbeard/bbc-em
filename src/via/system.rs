@@ -6,11 +6,13 @@ use std::ops::Range;
 
 const MHZ: usize = 2_000_000;
 const CYCLES_PER_MS: usize = MHZ / 1_000;
-const TIMER_FREQ: u64 = CYCLES_PER_MS as u64 * 200;
+const TIMER_FREQ: u64 = 1_000 / 100 * CYCLES_PER_MS as u64;
+const VSYNC_FREQ: u64 = 1_000 / 50 * CYCLES_PER_MS as u64;
 
 pub struct System {
     cycles_elapsed: u64,
     timer_count: u64,
+    vsync_count: u64,
     registers: Registers
 }
 
@@ -29,6 +31,7 @@ impl System {
         System {
             cycles_elapsed: 0,
             timer_count: 0,
+            vsync_count: 0,
             registers: Registers::new(),
         }
     }
@@ -39,16 +42,6 @@ impl System {
                                    key_eval: K)
         where K: Fn(u8) -> bool
     {
-
-        // Store any applicable register writes / reads
-//        match read {
-//            Some(IFR_REGISTER) => {
-//                self.registers.interrupts.clear_flags(Flags(0x7f));
-//                log_via!("IFR read. Now {:08b}", u8::from(self.registers.interrupts.flags()));
-//            }
-//            _ => {}
-//        }
-
         match write {
             Some((PB_IO_REG, val)) => {
                 match val & 0x07 {
@@ -66,20 +59,20 @@ impl System {
                     _ => {},
                 }
 
-                self.registers.write_port_b_io(val);
                 self.registers.interrupts.clear_flags(Flags(0x18));
+                self.registers.write_port_b_io(val);
             },
             Some((PA1_IO_REG, val)) => {
-                self.registers.write_port_a1_io(val);
                 self.registers.interrupts.clear(&[
                     InterruptType::Keyboard, 
                     InterruptType::VerticalSync]);
+                self.registers.write_port_a1_io(val);
             },
             Some((PA2_IO_REG, val)) => {
-                self.registers.write_port_a2_io(val);
                 self.registers.interrupts.clear(&[
                     InterruptType::Keyboard, 
                     InterruptType::VerticalSync]);
+                self.registers.write_port_a2_io(val);
             },
             Some((PB_DDR_REG, val)) => {
                 self.registers.set_port_b_ddr(val);
@@ -117,7 +110,8 @@ impl System {
               K: Fn(u8) -> bool
     {
         self.cycles_elapsed = self.cycles_elapsed.wrapping_add(cycles as _);
-        self.timer_count += cycles as _;
+        self.timer_count += cycles as u64;
+        self.vsync_count += cycles as u64;
 
         self.process_reads_and_writes(
             mem.last_hw_read(), 
@@ -126,13 +120,16 @@ impl System {
 
         if self.timer_count >= TIMER_FREQ {
             self.registers.interrupts.signal_one(InterruptType::Timer1);
-//            self.registers.interrupts.signal_one(InterruptType::VerticalSync);
             self.timer_count -= TIMER_FREQ;
+        }
+
+        if self.vsync_count >= VSYNC_FREQ {
+            self.registers.interrupts.signal_one(InterruptType::VerticalSync);
+            self.vsync_count -= VSYNC_FREQ;
         }
 
         let signalled = 
             self.registers.interrupts.drain_signalled();
-
 
         if signalled.iter().count() > 0 {
             log_via!(
@@ -151,6 +148,10 @@ impl System {
         self.registers.write_to(
             &mut mem.region_mut(SYSTEM_VIA_REG_RANGE)
                     .unwrap_or_else(|e| e.0));
+
+        assert_eq!(
+            mem.region(SYSTEM_VIA_REG_RANGE).unwrap_or_else(|e| e.0)[IFR_REGISTER as usize - SYSTEM_VIA_REG_START as usize],
+            u8::from(self.registers.interrupts.flags()));
 
     }
 

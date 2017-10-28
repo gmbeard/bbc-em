@@ -52,7 +52,23 @@ impl PeripheralPort {
     }
 
     pub fn write(&mut self, val: u8) {
-        self.io = Io(val & u8::from(self.ddr))
+        self.io = Io((val & u8::from(self.ddr)) | !u8::from(self.ddr))
+    }
+}
+
+#[cfg(test)]
+mod port_should {
+    use super::*;
+   
+    #[test]
+    fn set_all_ddr_read_bits_to_one() {
+        let mut port = PeripheralPort::default();
+
+        port.set_data_direction(0x7f);
+        port.write(0x01);
+
+        assert_eq!(0x81, u8::from(port.io()));
+        assert_eq!(0x80, port.read());
     }
 }
 

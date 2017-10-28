@@ -112,14 +112,7 @@ fn run_emulator<E>(mut emu: E, args: &[String]) -> Result<(), ApplicationError>
     let timer = Timer::new();
     let mut emulated_cycles = 0;
 
-    while window.is_open() && !window.is_key_down(Key::Escape) {
-        emu.clear_keyboard_buffer();
-        window.get_keys().map(|keys| {
-            for k in keys {
-                emu.keydown(k as u32);
-            }
-        });
-
+    'outer: while window.is_open() && !window.is_key_down(Key::Escape) {
         let target_cycles = timer.elapsed_nanos() / NS_PER_CYCLE;
         let frame_timer = Timer::new();
 
@@ -134,13 +127,23 @@ fn run_emulator<E>(mut emu: E, args: &[String]) -> Result<(), ApplicationError>
                      emulated_cycles += cycles as u64;
                 },
                 StepResult::Paused => {
-                    break;
+                    window.update_with_buffer(&fb).unwrap();
+                    thread::sleep(Duration::from_millis(3));
+                    continue 'outer;
                 }
                 StepResult::Exit => return Ok(()),
             }
         }
 
         window.update_with_buffer(&fb).unwrap();
+
+        emu.clear_keyboard_buffer();
+        window.get_keys().map(|keys| {
+            for k in keys {
+                emu.keydown(k as u32);
+            }
+        });
+
         thread::sleep(Duration::from_millis(3));
     }
 

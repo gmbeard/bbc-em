@@ -1,40 +1,51 @@
 use via::interrupts::*;
 use via::peripheral_port::*;
 
+macro_rules! create_key_map {
+    ( $( $platform_num:expr => [$row:expr, $col:expr] ),+, ) => {
+        const KEY_MAP: &'static [(usize, [usize; 2])] = &[
+            $(
+                ($platform_num, [$row, $col])
+            ),*
+        ];
+    };
+}
+
+create_key_map! {
+    10 => [4, 7], // A
+    11 => [4, 1], // B
+    12 => [6, 4], // C
+    13 => [3, 2], // D
+    14 => [2, 2], // E
+    15 => [4, 3], // F
+    16 => [5, 3], // G
+    17 => [5, 4], // H
+    18 => [2, 6], // I
+    19 => [4, 5], // J
+    20 => [4, 6], // K
+    21 => [5, 6], // L
+    22 => [6, 5], // M
+    23 => [5, 5], // N
+    24 => [3, 6], // O
+    25 => [3, 7], // P
+    26 => [1, 0], // Q
+    27 => [3, 3], // R
+    28 => [5, 1], // S
+    29 => [2, 3], // T
+    30 => [3, 5], // U
+    31 => [6, 3], // V
+    32 => [2, 1], // W
+    33 => [4, 2], // X
+    34 => [4, 4], // Y
+    35 => [6, 1], // Z
+}
+
 #[derive(Default)]
 struct KeyboardBuffer {
     buffer: [u32; 16],
     next: usize,
     write_enabled: bool,
 }
-//Q: [0, 1],
-//W: [1, 2],
-//E: [2, 2],
-//R: [3, 3],
-//T: [3, 2],
-//Y: [4, 4],
-//U: [5, 3],
-//I: [5, 2],
-//O: [6, 3],
-//P: [7, 3],
-//
-//A: [1, 4],
-//S: [1, 5],
-//D: [2, 3],
-//F: [3, 4],
-//G: [3, 5],
-//H: [4, 5],
-//J: [5, 4],
-//K: [6, 4],
-//L: [6, 5],
-//
-//Z: [1, 6],
-//X: [2, 4],
-//C: [2, 5],
-//V: [3, 6],
-//B: [4, 6],
-//N: [5, 5],
-//M: [5, 6],
 
 impl KeyboardBuffer {
     fn key_down(&mut self, keynum: u32) {
@@ -47,26 +58,34 @@ impl KeyboardBuffer {
         self.next = 0;
     }
 
+    fn len(&self) -> usize {
+        self.next
+    }
+
     fn is_emulated_key_down(&self, rowcol: u8) -> bool {
-        //  TODO:
-        let col = (rowcol >> 4) & 0x07;
-        let row = rowcol & 0x0f;
-        log_via!("Scanning keyboard row {:02x}, col {:02x}", 
-            (rowcol >> 4) & 0x07,
-            rowcol & 0x0f
-        );
-        row == 3 && col == 3
-//        rowcol == 0x43
-    }
-
-    fn write_enable(&mut self, f: bool) {
-        self.write_enabled = f;
-    }
-
-    fn is_write_enabled(&self) -> bool {
-        self.write_enabled
+        let int_keynum: [usize; 2] = [
+            ((rowcol >> 4) & 0x07) as usize,
+            (rowcol & 0x0f) as usize
+        ];
+        
+        KEY_MAP.iter()
+               .filter(|k| self.buffer[..self.next]
+                               .iter()
+                               .find(|&b| k.0 == *b as usize)
+                               .is_some())
+               .find(|&k| int_keynum == k.1)
+               .is_some()
     }
 }
+
+const SOUND_IC_LATCH: usize = 0;
+const SPEECH_READ_IC_LATCH: usize = 1;
+const SPEECH_WRITE_IC_LATCH: usize = 2;
+const KEYBOARD_IC_LATCH: usize = 3;
+const HW_SCROLL_LOW_LATCH: usize = 4;
+const HW_SCROLL_HIGH_LATCH: usize = 5;
+const CAPS_LATCH: usize = 6;
+const SHIFT_LATCH: usize =7;
 
 #[derive(Default)]
 pub struct Registers {
@@ -74,22 +93,8 @@ pub struct Registers {
     pb: PeripheralPort,
     pub interrupts: Interrupts,
     pa2: PeripheralPort,
-    ic: SelectedIc,
     keyboard_buffer: KeyboardBuffer,
-}
-
-#[derive(Copy, Clone)]
-pub enum SelectedIc {
-    Keyboard(bool),
-    SpeechWrite,
-    SpeechRead,
-    Sound(bool),
-}
-
-impl Default for SelectedIc {
-    fn default() -> SelectedIc {
-        SelectedIc::Keyboard(true)
-    }
+    latches: [bool; 8],
 }
 
 fn check_len(mem: &[u8]) {
@@ -99,71 +104,63 @@ fn check_len(mem: &[u8]) {
 }
 
 impl Registers {
+    fn is_keyboard_write_enabled(&self) -> bool {
+        self.latches[KEYBOARD_IC_LATCH]
+    }
+}
+
+impl Registers {
     pub fn new() -> Registers {
         Registers::default()
     }
 
     pub fn write_port_a1_io(&mut self, val: u8) {
-        self.pa1.set_io(Io(val)); 
-        if !self.keyboard_buffer.is_write_enabled() &&
-            self.keyboard_buffer.is_emulated_key_down(val & 0x7f)
-        {
-            self.pa1.set_io(Io(0x80));
-        }
-
-//        match self.ic {
-//            SelectedIc::Keyboard(false) => {
-//                log_via!("Checking for key {:02x}", val);
-//                if self.keyboard_buffer.is_emulated_key_down(val) {
-//                    self.pa1.set_io(Io(0x80));
-//                }
-//            },
-//            SelectedIc::Sound(true) => {
-//                log_via!("Write {:02x} ({:08b}) to sound hw", val, val);
-//            }
-//            _ => {}
-//        }
+        log_via!("Wrote {:02x} to peripheral port a /w handshake", val);
     }
 
     pub fn write_port_a2_io(&mut self, val: u8) {
-        self.pa2.set_io(Io(val)); 
-        if !self.keyboard_buffer.is_write_enabled() &&
-            self.keyboard_buffer.is_emulated_key_down(val & 0x7f)
+        self.pa2.write(val);
+        if self.keyboard_buffer.len() > 0 {
+            self.interrupts.signal_one(InterruptType::Keyboard);
+        }
+
+        if !self.is_keyboard_write_enabled() && 
+            !self.keyboard_buffer.is_emulated_key_down(u8::from(self.pa2.io()))
         {
-            self.pa2.set_io(Io(0x80));
+            self.pa2.set_io(Io(val & 0x7f));
         }
     }
 
     pub fn write_port_b_io(&mut self, val: u8) {
         self.pb.write(val);
-        match val & 0x03 {
-            0 => {
-                log_via!("Sound write enable latch set to {}", bit_is_set!(val, 3));
-                self.ic = SelectedIc::Sound(bit_is_set!(val, 3));
+        match (val & 0x03, bit_is_set!(val, 3)) {
+            (0, f) => {
+                log_via!("Sound write enable latch set to {}", f);
+                self.latches[SOUND_IC_LATCH] = f;
             },
-            1 => {
+            (1, f) => {
                 log_via!("Speech read enable latch");
-                self.ic = SelectedIc::SpeechRead;
+                self.latches[SPEECH_READ_IC_LATCH] = f;
             },
-            2 => {
+            (2, f) => {
                 log_via!("Speech write enable latch");
-                self.ic = SelectedIc::SpeechWrite;
+                self.latches[SPEECH_WRITE_IC_LATCH] = f;
             },
-            3 => {
-                log_via!("Keyboard write enable latch set to {}", bit_is_set!(val, 3));
-                let write_enabled = bit_is_set!(val, 3);
-                self.ic = SelectedIc::Keyboard(write_enabled);
-                self.keyboard_buffer.write_enable(write_enabled);
+            (3, f) => {
+                log_via!("Keyboard write enable latch set to {}", f);
+                self.latches[KEYBOARD_IC_LATCH] = f;
+//                self.keyboard_buffer.write_enable(f);
                 //  TODO:
                 //  Do we have to rescan the keyboard each time we latch the 
                 //  KB IC? Do we have to rescan when we latch *any* IC?
             },
-            _ => panic!("Invalid IC latched!")
+            _ => panic!("Invalid IC ({}) latched!", val)
         }
     }
 
     pub fn set_port_a_ddr(&mut self, val: u8) {
         self.pa1.set_data_direction(val);
+        self.pa2.set_data_direction(val);
     }
 
     pub fn set_port_b_ddr(&mut self, val: u8) {
@@ -190,5 +187,18 @@ impl Registers {
 
     pub fn clear_keyboard_buffer(&mut self) {
         self.keyboard_buffer.clear();
+    }
+}
+
+#[cfg(test)]
+mod keyboard_should {
+    use super::*;
+
+    #[test]
+    fn report_correct_key_is_down() {
+        let mut kb = KeyboardBuffer::default();
+        kb.key_down(16);
+
+        assert!(kb.is_emulated_key_down(0x23));
     }
 }

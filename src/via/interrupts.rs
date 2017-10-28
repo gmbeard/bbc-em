@@ -82,7 +82,7 @@ impl Interrupts {
 
     pub fn flags(&self) -> Flags {
         Flags(
-            if self.flags & 0x7f > 0 { 
+            if (self.flags & 0x7f) > 0 { 
                 0x80 | (self.flags & 0x7f)
             }
             else {
@@ -131,6 +131,8 @@ impl Interrupts {
     pub fn signal_one(&mut self, t: InterruptType) {
         self.signalled |= (0x01 << (t as u32 & 0x07));
         self.flags |= self.signalled;
+        log_via!("Signalled interrupt {}. Flags now {:08b}", 
+            t, u8::from(self.flags()));
     }
 
     pub fn set_enabled(&mut self, e: Enabled) {
@@ -146,6 +148,7 @@ impl Interrupts {
         if (self.flags & 0x7f) != 0 {
             self.flags |= 0x80;
         }
+        self.signalled = self.flags;
     }
 }
 
